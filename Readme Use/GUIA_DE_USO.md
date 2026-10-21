@@ -21,12 +21,9 @@
 
 - ✅ Crea ISOs de tu sistema Linux actual
 - ✅ Clona tu escritorio y configuraciones
-- ✅ Personaliza la configuración de la ISO
+- ✅ Personaliza la configuración de la ISO (credenciales Live, compresión SquashFS o asistente oficial `sudo eggs config`)
 - ✅ Copia ISOs generadas a ubicaciones personalizadas
-- ✅ Ejecuta la secuencia de creación ISO de Eggsmaker Plus
-- ✅ Inicia instalaciones Live con Calamares o Krill
-- ✅ Recopila listas de paquetes y permite instalar o desinstalar paquetes nativos, AUR, Chaotic-AUR y Flatpak
-- ✅ Edita la configuración de Eggs desde un formulario gráfico
+- ✅ Ejecuta la secuencia de creación ISO de Eggsmaker
 - ✅ Permite limpiar temporales al finalizar
 
 ### Requisitos Previos
@@ -34,15 +31,7 @@
 - **Penguins' Eggs** instalado en el sistema
 - Permisos de **sudo** (se solicitará la contraseña al inicio)
 - Python 3.8 o superior
-- Conexión a internet (para instalar paquetes o descargar componentes)
-
-### Instalación Live y paquetes
-
-La sección **Instalación Live** permite iniciar Calamares o Krill. Calamares se abre como aplicación gráfica; Krill requiere una terminal gráfica compatible y solicita allí la contraseña de `sudo` para su interfaz de texto.
-
-En **Gestor de paquetes**, pulsa **Recopilar** para crear listas en `~/$(hostname)-pak/`, selecciona un origen y los paquetes, y usa **Instalar selección** o **Desinstalar selección**. Los orígenes disponibles dependen de la distribución y de las herramientas instaladas. En Arch se admiten paquetes nativos, AUR mediante `yay`, Chaotic-AUR y Flatpak; en Debian/Ubuntu se gestionan paquetes manuales de APT y Flatpak.
-
-El botón **Configurar Eggs** abre el editor gráfico de `eggs.yaml`; no ejecuta el asistente interactivo `eggs config` en modo texto.
+- Conexión a internet (para descargar o actualizar componentes si fuera necesario)
 
 ---
 
@@ -166,7 +155,10 @@ Crear ISO  |  Instalación Live  |  Configurar Eggs  |  Gestor de paquetes
 ## 🔄 Flujo de Trabajo
 
 1. En la pregunta de configuración del escritorio, elige si ejecutar `sudo eggs tools skel`.
-2. Si eliges editar la configuración de Eggs, se abre el formulario gráfico de `eggs.yaml`; no se lanza el asistente de texto `eggs config`.
+2. Si eliges editar la configuración de Eggs (`sudo eggs config`), se abre un diálogo interactivo y prolijo que ofrece:
+   - **Opciones Principales**: configuración visual de usuario Live, contraseña y algoritmo de compresión SquashFS (`zstd`, `xz`, `gzip`, `lz4`) con su nivel.
+   - **Asistente Terminal**: botón para lanzar directamente el asistente nativo `sudo eggs config` en una terminal gráfica (Konsole / x-terminal-emulator) y recargar los cambios al terminar.
+   - **Editor YAML**: edición directa y validada de `/etc/penguins-eggs.d/custom.yaml`.
 3. Elige si quieres crear una ISO normal o un clon del sistema (`--clone`).
 4. Confirma la generación. Eggsmaker ejecuta `sudo eggs kill && eggs tools clean && eggs remaster`, añadiendo `--clone` cuando corresponde.
 5. Selecciona el destino en el cuadro de diálogo. El selector de carpetas de la aplicación se reutiliza aquí y `rsync --info=progress2` muestra la copia en el terminal y la barra de progreso.
@@ -177,20 +169,20 @@ El orden es secuencial y cada decisión se presenta gráficamente antes de ejecu
 
 ## ⚡ Opciones Avanzadas
 
-### 🔧 Editar Configuración ISO
+### 🔧 Configuración de Penguins' Eggs (custom.yaml / sudo eggs config)
 
-Disponible mediante **Configurar Eggs**, que abre un formulario gráfico con los campos frecuentes y el YAML completo.
+El diálogo de configuración se activa durante el flujo de creación de la ISO y permite:
 
-#### Campos Editables:
+#### Parámetros Configurables:
 
-| Campo | Descripción | Ejemplo |
-|-------|-------------|---------|
-| **Contraseña de root** | Contraseña del superusuario en la ISO | `toor123` |
-| **Nombre base del snapshot** | Nombre de la distribución | `mi-debian` |
-| **Prefijo del snapshot** | Prefijo para versiones | `custom-` |
-| **Contraseña de usuario** | Contraseña del usuario live | `live123` |
+| Parámetro | Descripción | Valores / Ejemplo |
+|-----------|-------------|-------------------|
+| **Usuario Live** | Nombre de usuario para la sesión en vivo | `live`, `usuario` |
+| **Contraseña Live** | Contraseña del usuario Live (con botón para mostrar/ocultar) | `evolution` |
+| **Algoritmo SquashFS** | Algoritmo de compresión del sistema de archivos | `zstd` (recomendado), `xz`, `gzip`, `lz4` |
+| **Nivel ZSTD** | Nivel de compresión cuando se usa ZSTD | `1` a `22` (default: `3`, máximo: `19`) |
 
-> 📝 **Archivo editado**: `/etc/penguins-eggs.d/eggs.yaml`
+> 📝 **Archivo editado**: `/etc/penguins-eggs.d/custom.yaml`
 
 ### 📊 Indicadores en Tiempo Real
 

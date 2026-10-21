@@ -7,6 +7,7 @@ import shutil
 import tempfile
 import time
 import shlex
+import yaml
 from nicegui import ui
 
 from version import __app__, __version__
@@ -312,12 +313,7 @@ Total_time_label = None
 
 # UI Elements
 versions_eggs = None
-package_group_select = None
-package_select = None
-package_status = None
 ui_states: dict[str, dict] = {}
-
-PACKAGE_GROUPS = ('Nativos', 'AUR', 'Chaotic-AUR', 'Flatpak')
 
 def current_ui_state() -> dict:
     try:
@@ -531,7 +527,7 @@ async def run_iso_workflow() -> None:
             ui.notify('Falló la copia de configuración del escritorio', type='negative')
             return
 
-    if await ask_yes_no('Configuración de Eggs', '¿Desea editar la configuración de Eggs?'):
+    if await ask_yes_no('Configuración de Eggs (sudo eggs config)', '¿Desea realizar cambios en la configuración de eggs (sudo eggs config)?'):
         await edit_config_dialog()
 
     clone_system = await ask_yes_no('Tipo de ISO', '¿Desea crear un clon del sistema (--clone)?')
@@ -601,333 +597,277 @@ async def run_iso_workflow() -> None:
 
 async def edit_config_dialog() -> bool:
     append_log("DEBUG: edit_config_dialog called")
+    config_file = "/etc/penguins-eggs.d/custom.yaml"
+
     try:
-        config_file = "/etc/penguins-eggs.d/custom.yaml"
-        append_log(f"DEBUG: Reading {config_file}")
         rc, content = await backend.run_capture(f"sudo cat {shlex.quote(config_file)}")
-        append_log(f"DEBUG: read rc={rc}, content_len={len(content) if content else 0}")
         if rc != 0 or not content:
-            ui.notify('No se pudo leer custom.yaml. Verifique la autenticación sudo y el archivo del sistema.', type='warning')
-            return False
+            content = (
+                "# custom.yaml - Custom configurations for penguins-eggs\n"
+                "remaster:\n"
+                "  compression:\n"
+                "    algorithm: zstd\n"
+                "    level: 3\n"
+            )
     except Exception as e:
-        append_log(f"DEBUG: edit_config_dialog error: {e}")
-        ui.notify(f"Error: {e}", type='negative')
-        return False
-        
+        append_log(f"DEBUG: Error al leer {config_file}: {e}")
+        content = (
+            "# custom.yaml - Custom configurations for penguins-eggs\n"
+            "remaster:\n"
+            "  compression:\n"
+            "    algorithm: zstd\n"
+            "    level: 3\n"
+        )
+
+    try:
+        data = yaml.safe_load(content) or {}
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:
+        data = {}
+
+    remaster = data.get('remaster') if isinstance(data.get('remaster'), dict) else {}
+    init_user = remaster.get('user', '') or ''
+    init_password = remaster.get('password', '') or ''
+
+    compression = remaster.get('compression') if isinstance(remaster.get('compression'), dict) else {}
+    init_algo = compression.get('algorithm', 'zstd') or 'zstd'
+    if init_algo not in ('zstd', 'xz', 'gzip', 'lz4'):
+        init_algo = 'zstd'
+    try:
+        init_level = int(compression.get('level', 3) or 3)
+    except (ValueError, TypeError):
+        init_level = 3
+
     try:
         future = asyncio.get_running_loop().create_future()
         with ui.dialog() as d:
             d.props('persistent')
-            with ui.card().classes('w-[700px] max-w-full egg-panel'):
-                ui.label('Editar configuración de Eggs').classes('text-xl font-bold mb-4')
-                ui.label(config_file).classes('text-gray-400 text-sm')
-                config_yaml = ui.textarea(value=content).props('dark autogrow input-class="text-white"').classes('w-full')
-                
-                async def on_save():
-                    temp_path = None
-                    try:
-                        with tempfile.NamedTemporaryFile(
-                            mode='w', encoding='utf-8', prefix='eggsmaker2-custom-',
-                            dir=backend.get_home_dir(), delete=False,
-                        ) as config_file_tmp:
-                            temp_path = config_file_tmp.name
-                            config_file_tmp.write(config_yaml.value.rstrip() + '\n')
-                        rc = await backend.run_stream(f"sudo install -m 644 {shlex.quote(temp_path)} {shlex.quote(config_file)}", append_log)
-                        if rc == 0:
-                            ui.notify('Configuración guardada', type='positive')
+            with ui.card().classes('w-[760px] max-w-[95vw] egg-panel p-5 flex flex-col gap-3'):
+                # Header
+                with ui.row().classes('w-full items-center justify-between border-b border-gray-700 pb-2'):
+                    with ui.row().classes('items-center gap-2'):
+                        ui.icon('tune', size='sm').style('color: #00BFFF;')
+                        with ui.column().classes('gap-0'):
+                            ui.label("Configuración de Penguins’ Eggs (sudo eggs config)").classes('text-lg font-bold text-white')
+                            ui.label("Personalice la imagen ISO o ejecute el asistente oficial de Eggs").classes('text-xs text-gray-400')
+                    ui.badge('custom.yaml', color='blue-grey-8').props('outline')
+
+                # Navigation tabs
+                with ui.tabs().classes('w-full text-white').props('dense indicator-color=primary align=left') as tabs:
+                    tab_visual = ui.tab('visual', label='Opciones Principales', icon='tune')
+                    tab_terminal = ui.tab('terminal', label='Asistente Terminal', icon='terminal')
+                    tab_yaml = ui.tab('yaml', label='Editor YAML', icon='code')
+
+                with ui.tab_panels(tabs, value=tab_visual).classes('w-full bg-transparent text-white'):
+                    # TAB 1: Visual Form
+                    with ui.tab_panel(tab_visual).classes('p-2 flex flex-col gap-4'):
+                        with ui.card().classes('w-full bg-[#161a22] p-4 rounded-lg border border-gray-700'):
+                            ui.label('Sesión en Vivo (Modo Live)').classes('text-sm font-bold text-cyan-400 mb-1')
+                            ui.label('Configure las credenciales por defecto para iniciar sesión en el entorno Live de la ISO. Deje vacío para usar los valores predeterminados.').classes('text-xs text-gray-400 mb-3')
+                            with ui.row().classes('w-full gap-4'):
+                                user_input = ui.input(
+                                    label='Usuario Live',
+                                    value=init_user,
+                                    placeholder='live'
+                                ).props('dark outlined dense').classes('grow')
+                                pass_input = ui.input(
+                                    label='Contraseña Live',
+                                    value=init_password,
+                                    password=True,
+                                    password_toggle_button=True,
+                                    placeholder='evolution'
+                                ).props('dark outlined dense').classes('grow')
+
+                        with ui.card().classes('w-full bg-[#161a22] p-4 rounded-lg border border-gray-700'):
+                            ui.label('Compresión de la Imagen (SquashFS)').classes('text-sm font-bold text-cyan-400 mb-1')
+                            ui.label('Seleccione el algoritmo y nivel de compresión con el que se generará el sistema de archivos de la ISO.').classes('text-xs text-gray-400 mb-3')
+
+                            algo_options = {
+                                'zstd': 'zstd (Recomendado: rápido y equilibrado)',
+                                'xz': 'xz (Máxima compresión: tamaño mínimo, más lento)',
+                                'gzip': 'gzip (Compatibilidad estándar)',
+                                'lz4': 'lz4 (Ultra rápido: compresión ligera)'
+                            }
+                            with ui.row().classes('w-full gap-4 items-center'):
+                                algo_select = ui.select(
+                                    algo_options,
+                                    value=init_algo,
+                                    label='Algoritmo'
+                                ).props('dark outlined dense').classes('grow')
+
+                                level_input = ui.number(
+                                    label='Nivel ZSTD (1 - 22)',
+                                    value=init_level,
+                                    min=1,
+                                    max=22,
+                                    step=1
+                                ).props('dark outlined dense').classes('w-44')
+                                level_input.bind_visibility_from(algo_select, 'value', value='zstd')
+
+                            algo_help = ui.label('').classes('text-xs text-gray-400 mt-1')
+                            def update_algo_help():
+                                hints = {
+                                    'zstd': 'ℹ️ ZSTD comprime velozmente con muy buena reducción de tamaño. Nivel 3 es el estándar; 19 ofrece máxima compresión.',
+                                    'xz': 'ℹ️ XZ ofrece el menor tamaño de ISO posible, pero requiere más tiempo y CPU durante la generación.',
+                                    'gzip': 'ℹ️ GZIP es el compresor tradicional, universalmente compatible con todos los sistemas.',
+                                    'lz4': 'ℹ️ LZ4 prioriza el tiempo de descompresión y arranque inmediato, con un tamaño de ISO mayor.'
+                                }
+                                algo_help.text = hints.get(algo_select.value, '')
+                            algo_select.on_value_change(update_algo_help)
+                            update_algo_help()
+
+                    # TAB 2: Terminal Assistant
+                    with ui.tab_panel(tab_terminal).classes('p-2 flex flex-col gap-3'):
+                        with ui.card().classes('w-full bg-[#161a22] p-4 rounded-lg border border-gray-700'):
+                            ui.label('Asistente interactivo en terminal (sudo eggs config)').classes('text-sm font-bold text-cyan-400 mb-2')
+                            ui.label(
+                                'Penguins’ Eggs dispone de un asistente interactivo oficial en modo texto. '
+                                'Al presionar el botón se abrirá una ventana de terminal con dicho asistente. '
+                                'Al finalizar y cerrar la terminal, los cambios se recargarán automáticamente aquí.'
+                            ).classes('text-xs text-gray-300 leading-relaxed mb-4')
+
+                            terminal_status = ui.label('').classes('text-xs text-yellow-400')
+
+                            async def run_terminal_config():
+                                terminals = ('konsole', 'x-terminal-emulator', 'xfce4-terminal', 'gnome-terminal', 'xterm')
+                                terminal = next((name for name in terminals if shutil.which(name)), None)
+                                if not terminal:
+                                    ui.notify('No se encontró un emulador de terminal gráfica en el sistema', type='negative')
+                                    return
+
+                                terminal_status.text = 'Terminal abierta ejecutando sudo eggs config... Al terminar vuelva aquí.'
+                                cmd = "sudo eggs config; echo; read -r -p 'Presione Enter para volver a Eggsmaker...'"
+                                if terminal in ('gnome-terminal', 'x-terminal-emulator'):
+                                    args = [terminal, '--', 'bash', '-lc', cmd]
+                                elif terminal == 'xfce4-terminal':
+                                    args = [terminal, '--title=Eggsmaker 2 - eggs config', '-e', f"bash -lc {shlex.quote(cmd)}"]
+                                elif terminal == 'konsole':
+                                    args = [terminal, '--title', 'Eggsmaker 2 - eggs config', '-e', 'bash', '-lc', cmd]
+                                else:
+                                    args = [terminal, '-T', 'Eggsmaker 2 - eggs config', '-e', 'bash', '-lc', cmd]
+
+                                try:
+                                    proc = await asyncio.create_subprocess_exec(*args)
+                                    await proc.wait()
+                                    terminal_status.text = 'Asistente finalizado. Configuración recargada exitosamente.'
+                                    ui.notify('Configuración actualizada desde eggs config', type='positive')
+
+                                    _, new_raw = await backend.run_capture(f"sudo cat {shlex.quote(config_file)}")
+                                    if new_raw:
+                                        yaml_editor.value = new_raw
+                                        try:
+                                            new_d = yaml.safe_load(new_raw) or {}
+                                            if isinstance(new_d, dict):
+                                                rem = new_d.get('remaster') or {}
+                                                user_input.value = rem.get('user', '') or ''
+                                                pass_input.value = rem.get('password', '') or ''
+                                                cmp_info = rem.get('compression') or {}
+                                                if cmp_info.get('algorithm') in algo_options:
+                                                    algo_select.value = cmp_info.get('algorithm')
+                                                if 'level' in cmp_info:
+                                                    try:
+                                                        level_input.value = int(cmp_info.get('level'))
+                                                    except (ValueError, TypeError):
+                                                        pass
+                                        except Exception:
+                                            pass
+                                except Exception as err:
+                                    terminal_status.text = f'Error al iniciar terminal: {err}'
+                                    ui.notify(f'Error al abrir terminal: {err}', type='negative')
+
+                            with ui.row().classes('items-center gap-3'):
+                                ui.button('Abrir sudo eggs config en Terminal', icon='open_in_new', on_click=lambda: asyncio.create_task(run_terminal_config())).classes('egg-button')
+
+                    # TAB 3: Advanced YAML Editor
+                    with ui.tab_panel(tab_yaml).classes('p-2 flex flex-col gap-2'):
+                        ui.label('Edición directa de custom.yaml').classes('text-sm font-bold text-cyan-400')
+                        ui.label('Edición manual avanzada para parámetros personalizados de /etc/penguins-eggs.d/custom.yaml.').classes('text-xs text-gray-400')
+                        yaml_editor = ui.textarea(value=content).props('dark outlined input-class="font-mono text-xs text-cyan-100"').classes('w-full').style('height: 240px;')
+
+                # Footer / Actions
+                with ui.row().classes('w-full justify-between items-center border-t border-gray-700 pt-3'):
+                    ui.label(config_file).classes('text-xs text-gray-500 font-mono')
+
+                    with ui.row().classes('items-center gap-2'):
+                        def cancel_config() -> None:
                             d.close()
                             if not future.done():
-                                future.set_result(True)
-                        else:
-                            ui.notify('No se pudo guardar la configuración', type='negative')
-                    except Exception as e:
-                        ui.notify(f'Error: {e}', type='negative')
-                    finally:
-                        if temp_path and os.path.exists(temp_path):
-                            os.unlink(temp_path)
+                                future.set_result(False)
 
-                def cancel_config() -> None:
-                    d.close()
-                    if not future.done():
-                        future.set_result(False)
-                        
-                with ui.row().classes('w-full justify-end mt-4'):
-                    ui.button('Cancelar', on_click=cancel_config).classes('mr-2 bg-red-600 hover:bg-red-700')
-                    ui.button('Guardar cambios', on_click=lambda: asyncio.create_task(on_save())).classes('egg-button')
-        append_log("DEBUG: Opening dialog")
-        d.open()
-        return await future
+                        async def on_save():
+                            temp_path = None
+                            try:
+                                if tabs.value == 'visual':
+                                    current_data = {}
+                                    try:
+                                        current_data = yaml.safe_load(yaml_editor.value or content) or {}
+                                        if not isinstance(current_data, dict):
+                                            current_data = {}
+                                    except Exception:
+                                        current_data = {}
+
+                                    if 'remaster' not in current_data or not isinstance(current_data['remaster'], dict):
+                                        current_data['remaster'] = {}
+
+                                    if user_input.value and user_input.value.strip():
+                                        current_data['remaster']['user'] = user_input.value.strip()
+                                    elif 'user' in current_data['remaster']:
+                                        del current_data['remaster']['user']
+
+                                    if pass_input.value and pass_input.value.strip():
+                                        current_data['remaster']['password'] = pass_input.value.strip()
+                                    elif 'password' in current_data['remaster']:
+                                        del current_data['remaster']['password']
+
+                                    if 'compression' not in current_data['remaster'] or not isinstance(current_data['remaster']['compression'], dict):
+                                        current_data['remaster']['compression'] = {}
+
+                                    current_data['remaster']['compression']['algorithm'] = algo_select.value
+                                    if algo_select.value == 'zstd':
+                                        current_data['remaster']['compression']['level'] = int(level_input.value or 3)
+                                    elif 'level' in current_data['remaster']['compression']:
+                                        del current_data['remaster']['compression']['level']
+
+                                    out_text = yaml.dump(current_data, sort_keys=False, default_flow_style=False)
+                                else:
+                                    out_text = yaml_editor.value.rstrip() + '\n'
+                                    try:
+                                        yaml.safe_load(out_text)
+                                    except Exception as y_err:
+                                        ui.notify(f'Error de sintaxis YAML: {y_err}', type='negative')
+                                        return
+
+                                with tempfile.NamedTemporaryFile(
+                                    mode='w', encoding='utf-8', prefix='eggsmaker2-custom-',
+                                    dir=backend.get_home_dir(), delete=False,
+                                ) as config_file_tmp:
+                                    temp_path = config_file_tmp.name
+                                    config_file_tmp.write(out_text)
+
+                                rc = await backend.run_stream(f"sudo install -m 644 {shlex.quote(temp_path)} {shlex.quote(config_file)}", append_log)
+                                if rc == 0:
+                                    ui.notify('Configuración guardada correctamente', type='positive')
+                                    d.close()
+                                    if not future.done():
+                                        future.set_result(True)
+                                else:
+                                    ui.notify('No se pudo guardar la configuración', type='negative')
+                            except Exception as e:
+                                ui.notify(f'Error al guardar: {e}', type='negative')
+                            finally:
+                                if temp_path and os.path.exists(temp_path):
+                                    os.unlink(temp_path)
+
+                        ui.button('Cancelar', on_click=cancel_config).classes('bg-red-600 hover:bg-red-700 text-white')
+                        ui.button('Guardar cambios', icon='save', on_click=lambda: asyncio.create_task(on_save())).classes('egg-button')
+
+            d.open()
+            return await future
     except Exception as e:
         append_log(f"DEBUG: edit_config_dialog error: {e}")
         ui.notify(f"Error: {e}", type='negative')
         return False
-
-async def run_live_installer(installer: str) -> None:
-    if not check_sudo():
-        return
-
-    if installer == 'Calamares':
-        command = 'sudo eggs sysinstall calamares'
-        append_log('$ sudo eggs sysinstall calamares')
-        phase_status.text = 'Ejecutando: Instalación Live con Calamares'
-        phase_status.update()
-        set_progress(None, spinning=True)
-        try:
-            rc = await backend.run_stream(command, append_log)
-            ui.notify('Calamares finalizó' if rc == 0 else 'Calamares terminó con errores',
-                      type='positive' if rc == 0 else 'negative')
-        finally:
-            set_progress(0)
-            phase_status.text = 'Estado: Esperando'
-            phase_status.update()
-        return
-
-    terminals = ('x-terminal-emulator', 'gnome-terminal', 'xfce4-terminal', 'konsole', 'xterm')
-    terminal = next((name for name in terminals if shutil.which(name)), None)
-    if not terminal:
-        ui.notify('No se encontró una terminal gráfica para iniciar Krill', type='negative')
-        return
-
-    command = "sudo eggs sysinstall krill; printf '\\nKrill finalizó. '; read -r -p 'Presione Enter para cerrar...'"
-    if terminal in ('gnome-terminal', 'x-terminal-emulator'):
-        args = [terminal, '--', 'bash', '-lc', command]
-    elif terminal == 'xfce4-terminal':
-        args = [terminal, '--title=Eggsmaker 2 - Krill', '-e', f"bash -lc {shlex.quote(command)}"]
-    elif terminal == 'konsole':
-        args = [terminal, '--title', 'Eggsmaker 2 - Krill', '-e', 'bash', '-lc', command]
-    else:
-        args = [terminal, '-T', 'Eggsmaker 2 - Krill', '-e', 'bash', '-lc', command]
-
-    try:
-        process = await asyncio.create_subprocess_exec(*args)
-        phase_status.text = 'Ejecutando: Instalación Live con Krill'
-        phase_status.update()
-        set_progress(None, spinning=True)
-        append_log('$ sudo eggs sysinstall krill (terminal interactiva)')
-        ui.notify('Krill se abrió en una terminal gráfica', type='positive')
-
-        async def wait_for_krill() -> None:
-            rc = await process.wait()
-            set_progress(0)
-            phase_status.text = 'Estado: Esperando'
-            phase_status.update()
-            if rc != 0:
-                ui.notify('La terminal de Krill terminó con errores', type='negative')
-
-        asyncio.create_task(wait_for_krill())
-    except OSError as error:
-        append_log(f'No se pudo abrir Krill: {error}')
-        ui.notify(f'No se pudo abrir Krill: {error}', type='negative')
-
-def package_list_dir() -> str:
-    return os.path.join(backend.get_home_dir(), f'{socket.gethostname()}-pak')
-
-def load_package_group(group: str) -> list[str]:
-    filename = {
-        'Nativos': 'lista-nativo.txt',
-        'AUR': 'lista-aur.txt',
-        'Chaotic-AUR': 'lista-chaotic-aur.txt',
-        'Flatpak': 'lista-flatpak.txt',
-    }.get(group)
-    if not filename:
-        return []
-    try:
-        with open(os.path.join(package_list_dir(), filename), encoding='utf-8') as package_file:
-            return sorted({line.strip() for line in package_file if line.strip()})
-    except OSError:
-        return []
-
-def refresh_package_options(state: dict | None = None) -> None:
-    state = state or current_ui_state()
-    package_group_select = state.get('package_group_select')
-    package_select = state.get('package_select')
-    package_status = state.get('package_status')
-    if package_group_select is None or package_select is None:
-        return
-    packages = load_package_group(package_group_select.value or 'Nativos')
-    package_select.options = packages
-    package_select.value = []
-    package_select.update()
-    if package_status:
-        package_status.text = f'{len(packages)} paquetes disponibles'
-        package_status.update()
-
-def clear_package_lists() -> None:
-    state = current_ui_state()
-    package_status = state.get('package_status')
-    with ui.dialog() as dialog:
-        with ui.card().classes('egg-panel'):
-            ui.label('¿Vaciar las listas de paquetes recopiladas?').classes('text-white font-bold')
-            ui.label(package_list_dir()).classes('text-gray-300')
-
-            async def confirm_clear() -> None:
-                list_files = ' '.join(
-                    shlex.quote(os.path.join(package_list_dir(), filename))
-                    for filename in (
-                        'lista-nativo.txt', 'lista-aur.txt', 'lista-chaotic-aur.txt', 'lista-flatpak.txt'
-                    )
-                )
-                rc = await backend.run_stream(f'rm -f {list_files}', append_log)
-                dialog.close()
-                refresh_package_options(state)
-                package_status.text = 'Listas eliminadas' if rc == 0 else 'No se pudieron eliminar las listas'
-                package_status.update()
-                ui.notify(package_status.text, type='positive' if rc == 0 else 'negative')
-
-            with ui.row().classes('w-full justify-end'):
-                ui.button('Cancelar', on_click=dialog.close)
-                ui.button('Vaciar listas', on_click=confirm_clear).props('color=negative')
-    dialog.open()
-
-async def collect_package_lists() -> None:
-    state = current_ui_state()
-    package_status = state.get('package_status')
-    phase_status = state.get('phase_status')
-    if not check_sudo():
-        return
-
-    package_status.text = 'Recopilando paquetes instalados...'
-    package_status.update()
-    phase_status.text = 'Ejecutando: Recopilar paquetes'
-    phase_status.update()
-    set_progress(None, spinning=True)
-    try:
-        _, release = await backend.run_capture('cat /etc/os-release')
-        release_values = {}
-        for line in release.splitlines():
-            if '=' in line:
-                key, value = line.split('=', 1)
-                release_values[key] = value.strip().strip('"')
-        distro_ids = f"{release_values.get('ID', '')} {release_values.get('ID_LIKE', '')}".lower()
-        is_arch = any(name in distro_ids for name in ('arch', 'manjaro', 'endeavour', 'cachy'))
-        is_debian = any(name in distro_ids for name in ('debian', 'ubuntu', 'mint', 'pop'))
-        if not is_arch and not is_debian:
-            raise RuntimeError('El gestor de paquetes solo admite familias Arch y Debian/Ubuntu')
-
-        groups = {name: [] for name in PACKAGE_GROUPS}
-        if is_arch:
-            _, installed = await backend.run_capture("pacman -Qqe | sort | grep -vwE '^(base|base-devel)$'")
-            _, aur = await backend.run_capture('pacman -Qqem | sort')
-            _, chaotic_repo = await backend.run_capture(
-                "pacman -Sl chaotic-aur 2>/dev/null | awk '$1 == \"chaotic-aur\" {print $2}'"
-            )
-            installed_names = set(installed.splitlines())
-            aur_names = set(aur.splitlines())
-            chaotic_names = set(chaotic_repo.splitlines())
-            foreign_names = installed_names - aur_names
-            groups['AUR'] = sorted(aur_names - chaotic_names)
-            groups['Chaotic-AUR'] = sorted(foreign_names & chaotic_names)
-            groups['Nativos'] = sorted(foreign_names - chaotic_names)
-        else:
-            _, native = await backend.run_capture('apt-mark showmanual | sort')
-            groups['Nativos'] = sorted(set(native.splitlines()))
-
-        user = shlex.quote(os.environ.get('SUDO_USER') or getpass.getuser())
-        _, flatpak = await backend.run_capture(
-            f"command sudo -u {user} -H env DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u {user})/bus "
-            f"XDG_RUNTIME_DIR=/run/user/$(id -u {user}) flatpak list --app --columns=application 2>/dev/null"
-        )
-        groups['Flatpak'] = sorted(set(flatpak.splitlines()))
-
-        list_dir = package_list_dir()
-        real_user = shlex.quote(backend.get_real_user())
-        real_group = shlex.quote(backend.get_real_group())
-        quoted_list_dir = shlex.quote(list_dir)
-        list_files = ' '.join(
-            shlex.quote(os.path.join(list_dir, filename))
-            for filename in ('lista-nativo.txt', 'lista-aur.txt', 'lista-chaotic-aur.txt', 'lista-flatpak.txt')
-        )
-        rc = await backend.run_stream(
-            f'install -d -o {real_user} -g {real_group} {quoted_list_dir} && '
-            f'(chown {real_user}:{real_group} {list_files} 2>/dev/null || true)',
-            append_log,
-        )
-        if rc != 0:
-            raise PermissionError(f'No se pudo preparar la carpeta {list_dir}')
-        filenames = {
-            'Nativos': 'lista-nativo.txt',
-            'AUR': 'lista-aur.txt',
-            'Chaotic-AUR': 'lista-chaotic-aur.txt',
-            'Flatpak': 'lista-flatpak.txt',
-        }
-        for group, filename in filenames.items():
-            with open(os.path.join(list_dir, filename), 'w', encoding='utf-8') as package_file:
-                package_file.write(''.join(f'{package}\n' for package in groups[group]))
-
-        refresh_package_options(state)
-        summary = ' · '.join(f'{group}: {len(packages)}' for group, packages in groups.items())
-        package_status.text = f'Listas guardadas en {package_list_dir()} | {summary}'
-        package_status.update()
-        append_log(f'Listas de paquetes generadas: {summary}')
-        ui.notify('Listas de paquetes actualizadas', type='positive')
-    except Exception as error:
-        append_log(f'Error al recopilar paquetes: {error}')
-        package_status.text = f'Error: {error}'
-        package_status.update()
-        ui.notify(f'Error al recopilar paquetes: {error}', type='negative')
-    finally:
-        set_progress(0)
-        phase_status.text = 'Estado: Esperando'
-        phase_status.update()
-
-async def manage_packages(remove: bool = False) -> None:
-    state = current_ui_state()
-    package_group_select = state.get('package_group_select')
-    package_select = state.get('package_select')
-    package_status = state.get('package_status')
-    phase_status = state.get('phase_status')
-    if not check_sudo():
-        return
-    group = package_group_select.value
-    selected = package_select.value or []
-    if not selected:
-        ui.notify('Seleccione al menos un paquete', type='warning')
-        return
-
-    names = ' '.join(shlex.quote(package) for package in selected)
-    user = shlex.quote(os.environ.get('SUDO_USER') or getpass.getuser())
-    if group == 'Flatpak':
-        action = 'uninstall -y --user' if remove else 'install -y --user'
-        command = (
-            f'command sudo -u {user} -H env DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u {user})/bus '
-            f'XDG_RUNTIME_DIR=/run/user/$(id -u {user}) flatpak {action} {names}'
-        )
-    elif group == 'AUR':
-        if not await backend.command_exists('yay'):
-            ui.notify('Se requiere yay para instalar o quitar paquetes AUR', type='warning')
-            return
-        action = '-Rns --noconfirm' if remove else '-S --needed --noconfirm'
-        command = f'command sudo -u {user} -H yay {action} {names}'
-    elif group == 'Chaotic-AUR':
-        action = '-Rns --noconfirm' if remove else '-S --needed --noconfirm'
-        package_names = selected if remove else [f'chaotic-aur/{package}' for package in selected]
-        command = f"sudo pacman {action} " + ' '.join(shlex.quote(package) for package in package_names)
-    else:
-        action = '-Rns --noconfirm' if remove else '-S --needed --noconfirm'
-        has_pacman = await backend.command_exists('pacman')
-        command = f'sudo pacman {action} {names}' if has_pacman else (
-            f'sudo apt-get remove -y {names}' if remove else f'sudo apt-get install -y {names}'
-        )
-
-    operation = 'Desinstalando' if remove else 'Instalando'
-    phase_status.text = f'Ejecutando: {operation} paquetes ({group})'
-    phase_status.update()
-    package_status.text = f'{operation} {len(selected)} paquetes...'
-    package_status.update()
-    set_progress(None, spinning=True)
-    append_log(f'$ {command}')
-    try:
-        rc = await backend.run_stream(command, append_log)
-        package_status.text = 'Proceso completado' if rc == 0 else f'Proceso finalizado con código {rc}'
-        package_status.update()
-        ui.notify('Proceso completado' if rc == 0 else 'El gestor de paquetes informó errores',
-                  type='positive' if rc == 0 else 'negative')
-        if rc == 0:
-            await collect_package_lists()
-    finally:
-        set_progress(0)
-        phase_status.text = 'Estado: Esperando'
-        phase_status.update()
 
 async def open_dir_picker(target_input=None) -> None:
     append_log("DEBUG: open_dir_picker called")
@@ -1045,26 +985,6 @@ def main_page():
             ui.label('Generador de ISO').classes('egg-title')
             ui.button('Crear ISO', icon='disc_full', on_click=run_iso_workflow).classes('egg-button')
 
-    async def start_live_installer() -> None:
-        await run_live_installer(installer_choice.value)
-
-    async def install_selected_packages() -> None:
-        await manage_packages(remove=False)
-
-    async def uninstall_selected_packages() -> None:
-        await manage_packages(remove=True)
-
-    with ui.row().classes('w-full items-stretch q-gutter-sm q-pa-none q-ma-none'):
-        with ui.card().classes('min-w-[300px] grow egg-panel'):
-            ui.label('Instalación Live').classes('egg-title')
-            ui.label('Ejecuta Calamares en modo gráfico o abre Krill en una terminal interactiva.').classes('text-gray-300')
-            installer_choice = ui.radio(['Calamares', 'Krill'], value='Calamares').props('inline color=light-blue')
-            ui.button('Iniciar instalador', on_click=start_live_installer).classes('egg-button mt-2')
-
-        with ui.card().classes('min-w-[300px] grow egg-panel'):
-            ui.label('Configuración de Penguins’ Eggs').classes('egg-title')
-            ui.label('Edita /etc/penguins-eggs.d/custom.yaml sin abrir el asistente de texto.').classes('text-gray-300')
-            ui.button('Configurar Eggs', on_click=edit_config_dialog).classes('egg-button mt-2')
 
     # Status Bar - Simplified for visibility
     with ui.row().classes('w-full'):
@@ -1091,23 +1011,6 @@ def main_page():
                     iso_time_label = ui.label("Generación: 00:00:00").style('color: red; font-size: 14px; font-weight: bold;')
                     Total_time_label = ui.label("Total: 00:00:00").style('color: lime; font-size: 14px; font-weight: bold;')
 
-    with ui.card().classes('w-full egg-panel q-mt-sm'):
-        ui.label('Gestor de paquetes').classes('egg-title')
-        ui.label('Recopila listas de paquetes del sistema y selecciona qué instalar o desinstalar.').classes('text-gray-300')
-        with ui.row().classes('w-full items-end'):
-            package_group_select = ui.select(
-                list(PACKAGE_GROUPS), value='Nativos', label='Origen'
-            ).props('dark').classes('min-w-[180px]')
-            package_group_select.on_value_change(lambda _: refresh_package_options())
-            package_select = ui.select(
-                [], multiple=True, with_input=True, label='Paquetes'
-            ).props('use-chips dark').classes('grow')
-            ui.button('Recopilar', icon='refresh', on_click=collect_package_lists).classes('egg-button')
-        with ui.row().classes('items-center'):
-            ui.button('Instalar selección', icon='download', on_click=install_selected_packages).classes('egg-button')
-            ui.button('Desinstalar selección', icon='delete', on_click=uninstall_selected_packages).props('color=negative')
-            ui.button('Vaciar listas', icon='delete_sweep', on_click=clear_package_lists).props('flat')
-            package_status = ui.label('Aún no hay listas. Use “Recopilar” para generarlas.').classes('text-gray-300')
                 
     # Network info footer
     def show_about_dialog():
@@ -1181,9 +1084,6 @@ def main_page():
             'iso_time_label': iso_time_label,
             'total_time_label': Total_time_label,
             'versions_eggs': versions_eggs,
-            'package_group_select': package_group_select,
-            'package_select': package_select,
-            'package_status': package_status,
             'copying': False,
             'iso_generating': False,
             'copy_count': 0,
@@ -1192,7 +1092,6 @@ def main_page():
             'copy_started_at': None,
             'iso_started_at': None,
         }
-        refresh_package_options(ui_states[client_id])
 
     ui.timer(1.0, update_timers)
     ui.timer(0.2, update_eggs_version, once=True)

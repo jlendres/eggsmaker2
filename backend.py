@@ -55,6 +55,20 @@ class EggsmakerBackend:
         if not password:
             return False, "Por favor ingrese la contraseña de sudo"
 
+        # Invalidar cualquier sesión o timestamp residual previo
+        try:
+            reset_cmd = ['sudo', '-k']
+            if self.in_flatpak_sandbox:
+                reset_cmd = ['flatpak-spawn', '--host', *reset_cmd]
+            p_reset = await asyncio.create_subprocess_exec(
+                *reset_cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await p_reset.wait()
+        except OSError:
+            pass
+
         try:
             command = ['sudo', '-S', '-p', '', '-v']
             if self.in_flatpak_sandbox:
