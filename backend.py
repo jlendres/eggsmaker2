@@ -35,9 +35,26 @@ class EggsmakerBackend:
         rc, output = await self.run_capture(f'command -v {shlex.quote(command)}')
         return rc == 0 and bool(output.strip())
 
-    async def validate_sudo_password(self, password: str) -> bool:
+    async def validate_sudo_password(self, password: str) -> Tuple[bool, str]:
+        # Si sudo no requiere contraseña (NOPASSWD)
+        try:
+            check_nopass = ['sudo', '-n', 'true']
+            if self.in_flatpak_sandbox:
+                check_nopass = ['flatpak-spawn', '--host', *check_nopass]
+            p_nopass = await asyncio.create_subprocess_exec(
+                *check_nopass,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await p_nopass.wait()
+            if p_nopass.returncode == 0:
+                return True, ""
+        except OSError:
+            pass
+
         if not password:
-            return False
+            return False, "Por favor ingrese la contraseña de sudo"
+
         try:
             command = ['sudo', '-S', '-p', '', '-v']
             if self.in_flatpak_sandbox:
@@ -45,13 +62,16 @@ class EggsmakerBackend:
             process = await asyncio.create_subprocess_exec(
                 *command,
                 stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            await process.communicate(input=(password + '\n').encode())
-            return process.returncode == 0
-        except OSError:
-            return False
+            _, stderr = await process.communicate(input=(password + '\n').encode())
+            if process.returncode == 0:
+                return True, ""
+            err_msg = stderr.decode(errors='ignore').strip()
+            return False, err_msg or "Contraseña incorrecta o permisos insuficientes"
+        except OSError as e:
+            return False, str(e)
 
     def get_base_path(self) -> str:
         """Obtiene la ruta base de la aplicación, funciona tanto en desarrollo como compilado"""

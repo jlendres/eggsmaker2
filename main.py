@@ -1146,21 +1146,24 @@ def main_page():
         ui.label('Autenticación requerida (sudo)').classes('text-white font-bold')
         if not backend.sudo_available():
             ui.label('No se detectó sudo en el sistema; instálelo para ejecutar operaciones administrativas.').classes('text-orange-400')
-        pwd = ui.input('Contraseña de sudo', password=True, password_toggle_button=True).props('dark input-class="text-white"')
+        pwd = ui.input('Contraseña de sudo', password=True, password_toggle_button=True).props('autofocus dark input-class="text-white"')
 
         async def authenticate() -> None:
             if not backend.sudo_available():
                 ui.notify('No se encontró sudo. Instálelo antes de usar Eggsmaker 2.', type='negative')
                 return
             password = pwd.value or ''
-            if not await backend.validate_sudo_password(password):
+            valid, err = await backend.validate_sudo_password(password)
+            if not valid:
                 backend.sudo_password = None
                 pwd.value = ''
-                ui.notify('Contraseña incorrecta o sudo no disponible. Verifique permisos del usuario.', type='negative')
+                ui.notify(f'Error de autenticación: {err}', type='negative')
                 return
             backend.sudo_password = password
             sudo_dialog.close()
             append_log('Autenticación sudo validada.')
+
+        pwd.on('keydown.enter', authenticate)
 
         with ui.row():
             ui.button('Aceptar', on_click=authenticate).classes('egg-button')
