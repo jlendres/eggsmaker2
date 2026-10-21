@@ -1,11 +1,21 @@
 #!/usr/bin/env xdg-open
 [Desktop Entry]
-Version=1.0
-Type=Application
-Name=Eggsmaker 2
+Categories=System;Utility;Settings;
+Comment[es_AR]=Graphical system and ISO management for Penguins' Eggs
 Comment=Graphical system and ISO management for Penguins' Eggs
 Exec=eggsmaker2
+GenericName[es_AR]=
+GenericName=
 Icon=eggsmaker2
-Terminal=false
-Categories=System;Utility;Settings;
 Keywords=iso;eggs;linux;remaster;packages;installer;
+MimeType=
+Name[es_AR]=Eggsmaker2
+Name=Eggsmaker2
+Path=
+StartupNotify=true
+Terminal=false
+TerminalOptions=
+Type=Application
+Version=1.0
+X-KDE-SubstituteUID=false
+X-KDE-Username=
