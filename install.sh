@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Eggsmaker WEB Universal Installer
+# Eggsmaker 2 Universal Installer
 # Supports Arch, Debian/Ubuntu, Fedora, and other major distributions
 #
 
@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --help|-h)
-            echo "Eggsmaker WEB Installer"
+            echo "Eggsmaker 2 Installer"
             echo ""
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -58,7 +58,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo -e "${BLUE}╔════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║   Eggsmaker WEB Installer          ║${NC}"
+echo -e "${BLUE}║   Eggsmaker 2 Installer             ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════╝${NC}"
 echo ""
 
@@ -87,10 +87,10 @@ echo -e "\n${YELLOW}Installing system dependencies...${NC}"
 case $DISTRO_ID in
     arch|manjaro|endeavouros)
         if [ "$SYSTEM_INSTALL" = true ]; then
-            pacman -S --needed --noconfirm python python-pip git
+            pacman -S --needed --noconfirm python python-pip git rsync
         else
             echo "Checking dependencies..."
-            for pkg in python python-pip git; do
+            for pkg in python python-pip git rsync; do
                 if ! pacman -Q $pkg &>/dev/null; then
                     echo -e "${YELLOW}Please install $pkg manually: sudo pacman -S $pkg${NC}"
                 fi
@@ -100,10 +100,10 @@ case $DISTRO_ID in
     debian|ubuntu|linuxmint|pop)
         if [ "$SYSTEM_INSTALL" = true ]; then
             apt-get update
-            apt-get install -y python3 python3-pip python3-venv git
+            apt-get install -y python3 python3-pip python3-venv git rsync
         else
             echo "Checking dependencies..."
-            for pkg in python3 python3-pip python3-venv git; do
+            for pkg in python3 python3-pip python3-venv git rsync; do
                 if ! dpkg -l | grep -q "^ii  $pkg "; then
                     echo -e "${YELLOW}Please install $pkg manually: sudo apt install $pkg${NC}"
                 fi
@@ -112,10 +112,10 @@ case $DISTRO_ID in
         ;;
     fedora|rhel|centos|almalinux|rocky)
         if [ "$SYSTEM_INSTALL" = true ]; then
-            dnf install -y python3 python3-pip git
+            dnf install -y python3 python3-pip git rsync
         else
             echo "Checking dependencies..."
-            for pkg in python3 python3-pip git; do
+            for pkg in python3 python3-pip git rsync; do
                 if ! rpm -q $pkg &>/dev/null; then
                     echo -e "${YELLOW}Please install $pkg manually: sudo dnf install $pkg${NC}"
                 fi
@@ -124,18 +124,18 @@ case $DISTRO_ID in
         ;;
     *)
         echo -e "${YELLOW}Unknown distribution: $DISTRO_ID${NC}"
-        echo "Please ensure python3, pip, and git are installed"
+        echo "Please ensure python3, pip, git, and rsync are installed"
         ;;
 esac
 
 # Determine installation paths
 if [ "$SYSTEM_INSTALL" = true ]; then
-    INSTALL_DIR="/opt/eggsmaker-web"
+    INSTALL_DIR="/opt/eggsmaker2"
     BIN_DIR="/usr/local/bin"
     DESKTOP_DIR="/usr/share/applications"
     ICON_DIR="/usr/share/pixmaps"
 else
-    INSTALL_DIR="$HOME/.local/share/eggsmaker-web"
+    INSTALL_DIR="$HOME/.local/share/eggsmaker2"
     BIN_DIR="$HOME/.local/bin"
     DESKTOP_DIR="$HOME/.local/share/applications"
     ICON_DIR="$HOME/.local/share/icons"
@@ -166,24 +166,24 @@ deactivate
 
 # Create launcher wrapper
 echo -e "\n${YELLOW}Creating launcher...${NC}"
-cat > "$BIN_DIR/eggsmaker-web" <<EOF
+cat > "$BIN_DIR/eggsmaker2" <<EOF
 #!/bin/bash
-# Eggsmaker WEB Launcher Wrapper
+# Eggsmaker 2 Launcher Wrapper
 source "$INSTALL_DIR/venv/bin/activate"
 cd "$INSTALL_DIR"
 python3 "$INSTALL_DIR/main.py" "\$@"
 EOF
 
-chmod +x "$BIN_DIR/eggsmaker-web"
+chmod +x "$BIN_DIR/eggsmaker2"
 
 # Install desktop file
 echo -e "\n${YELLOW}Installing desktop entry...${NC}"
-sed "s|Exec=eggsmaker-web|Exec=$BIN_DIR/eggsmaker-web|g" eggsmaker-web.desktop > "$DESKTOP_DIR/eggsmaker-web.desktop"
-chmod +x "$DESKTOP_DIR/eggsmaker-web.desktop"
+sed "s|Exec=eggsmaker2|Exec=$BIN_DIR/eggsmaker2|g" eggsmaker2.desktop > "$DESKTOP_DIR/eggsmaker2.desktop"
+chmod +x "$DESKTOP_DIR/eggsmaker2.desktop"
 
 # Install icon
-if [ -f "assets/eggsmaker.png" ]; then
-    cp "assets/eggsmaker.png" "$ICON_DIR/eggsmaker.png"
+if [ -f "assets/assets/eggsmaker2.png" ]; then
+    cp "assets/assets/eggsmaker2.png" "$ICON_DIR/eggsmaker2.png"
 fi
 
 # Update desktop database
@@ -200,8 +200,8 @@ echo -e "\n${GREEN}╔═══════════════════�
 echo -e "${GREEN}║   Installation Complete!           ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${BLUE}To launch Eggsmaker WEB:${NC}"
-echo -e "  ${GREEN}eggsmaker-web${NC}"
+echo -e "${BLUE}To launch Eggsmaker 2:${NC}"
+echo -e "  ${GREEN}eggsmaker2${NC}"
 echo ""
 echo -e "${BLUE}Or find it in your application menu${NC}"
 echo ""

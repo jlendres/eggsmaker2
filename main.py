@@ -1,5 +1,10 @@
 import asyncio
+import getpass
 import os
+import re
+import socket
+import shutil
+import tempfile
 import time
 import shlex
 from nicegui import ui
@@ -285,18 +290,14 @@ body {{
 """.format(**COLORS)
 
 # Global state
-log_lines: list[str] = []
-auto_running = False
 iso_generating = False
 copying = False
 copy_count = 0
 
 copy_elapsed = 0
 iso_elapsed = 0
-auto_elapsed = 0
-
-# Copy progress state (shared between thread and UI)
-copy_state = {'progress': 0.0, 'percent': 0}
+copy_started_at = None
+iso_started_at = None
 
 # UI Elements
 console = None
@@ -309,43 +310,39 @@ copy_time_label = None
 iso_time_label = None
 Total_time_label = None
 
-# Buttons (for dynamic state changes)
-btn_phase1 = None
-btn_phase2 = None
-btn_phase3 = None
-btn_copy_iso = None
-btn_auto = None
-btn_clean = None
-
-# Switches
-prep_manual = None
-calamares_update = None
-replica_switch = None
-edit_config_switch = None
-iso_include_data = None
-iso_max_compression = None
-copy_speed_switch = None
-dest_dir_input = None
-fase2_btn = None
+# UI Elements
 versions_eggs = None
-versions_calamares = None
+package_group_select = None
+package_select = None
+package_status = None
+ui_states: dict[str, dict] = {}
+
+PACKAGE_GROUPS = ('Nativos', 'AUR', 'Chaotic-AUR', 'Flatpak')
+
+def current_ui_state() -> dict:
+    try:
+        return ui_states.get(ui.context.client.id, {})
+    except RuntimeError:
+        return {}
 
 def append_log(text: str) -> None:
-    if console:
-        console.push(text)
+    client_console = current_ui_state().get('console')
+    if client_console:
+        client_console.push(text)
 
 def set_progress(value: float | None, spinning: bool = False) -> None:
-    if progress is None:
+    client_progress = current_ui_state().get('progress')
+    if client_progress is None:
         return
     if spinning:
-        progress.props('indeterminate')  # Set indeterminate property
-        progress.value = 0  # Reset value
+        client_progress.props('indeterminate')
+        client_progress.value = 0
     else:
-        progress.props(remove='indeterminate')  # Remove indeterminate
-        progress.value = max(0.0, min(1.0, value or 0.0))
-    progress.update()
+        client_progress.props(remove='indeterminate')
+        client_progress.value = max(0.0, min(1.0, value or 0.0))
+    client_progress.update()
 
-async def update_versions() -> None:
+async def update_eggs_version() -> None:
     eggs_ver = 'No disponible'
     try:
         rc, out = await backend.run_capture('eggs --version')
@@ -359,410 +356,584 @@ async def update_versions() -> None:
     except Exception:
         pass
 
-    calamares_ver = 'No disponible'
-    try:
-        for cmd in ['calamares --version', 'calamares -v']:
-            rc, out = await backend.run_capture(cmd)
-            if rc == 0 and out:
-                import re
-                m = re.search(r"v?(\d+\.\d+(?:\.\d+)?)", out)
-                if m:
-                    calamares_ver = m.group(1)
-                else:
-                    calamares_ver = out.strip().splitlines()[-1]
-                break
-    except Exception:
-        pass
+    label = current_ui_state().get('versions_eggs')
+    if label:
+        label.text = f"Penguins' Eggs: {eggs_ver}"
+        label.update()
 
-    if versions_eggs:
-        versions_eggs.text = f"Penguins' Eggs: {eggs_ver}"
-        versions_eggs.update()
-    if versions_calamares:
-        versions_calamares.text = f"Calamares: {calamares_ver}"
-        versions_calamares.update()
-
-def update_iso_size() -> None:
-    # Check multiple locations
-    possible_sources = ["/home/eggs/.mnt/", "/home/eggs/"]
-    found_path = None
-    
-    for p in possible_sources:
-        if os.path.exists(p):
-            try:
-                files = [f for f in os.listdir(p) if f.endswith('.iso')]
-                if files:
-                    found_path = os.path.join(p, files[0])
-                    break
-            except Exception:
-                pass
-                
+async def update_iso_size() -> None:
+    iso_size_label = current_ui_state().get('iso_size_label')
+    if not iso_size_label:
+        return
+    found_path = await find_latest_iso()
     if not found_path:
         iso_size_label.text = 'Tamaño ISO: No encontrada'
     else:
         try:
-            size = os.path.getsize(found_path)
-            iso_size_label.text = f"Tamaño ISO: {backend.format_size(size)}"
+            rc, output = await backend.run_capture(f'stat -c %s -- {shlex.quote(found_path)}')
+            if rc != 0:
+                raise OSError(output.strip() or 'No se pudo consultar el tamaño de la ISO')
+            iso_size_label.text = f"Tamaño ISO: {backend.format_size(int(output.strip()))}"
         except Exception as e:
             iso_size_label.text = f"Error: {e}"
     iso_size_label.update()
 
 def check_sudo() -> bool:
+    if not backend.sudo_available():
+        ui.notify('No se encontró sudo. Instálelo para ejecutar operaciones administrativas.', type='negative')
+        return False
     if not backend.sudo_password:
         ui.notify('Se requiere contraseña de sudo. Recargue la página o reinicie.', type='negative')
         return False
     return True
 
-async def do_update_eggs_and_calamares() -> int:
-    if not check_sudo(): return -1
-    import shlex  # Import at function level for all code paths
-    try:
-        home = os.path.expanduser('~')
-        repo_dir = os.path.join(home, 'fresh-eggs')
-        append_log('=== INICIANDO ACTUALIZACIÓN ===')
-        if os.path.exists(repo_dir):
-            append_log('Eliminando versión anterior...')
-            rc = await backend.run_stream(f"rm -rf {shlex.quote(repo_dir)}", append_log)
-            if rc != 0: return rc
-        
-        append_log('Clonando repositorio de Eggs...')
-        rc = await backend.run_stream(f"git clone --quiet https://github.com/pieroproietti/fresh-eggs {shlex.quote(repo_dir)}", append_log)
-        if rc != 0: return rc
-        
-        script_path = os.path.join(repo_dir, 'fresh-eggs.sh')
-        rc = await backend.run_stream(f"chmod +x {shlex.quote(script_path)}", append_log)
-        if rc != 0: return rc
-        
-        # Execute with sudo like eggsmaker.py does - change to directory first and execute
-        # This is important because fresh-eggs.sh may have relative path dependencies
-        append_log('Ejecutando instalador...')
-        cd_and_exec = f"cd {shlex.quote(repo_dir)} && sudo ./fresh-eggs.sh"
-        rc = await backend.run_stream(cd_and_exec, append_log)
-        if rc != 0: return rc
-        
-        append_log('¡Actualización completada exitosamente!')
-        return 0
-    except Exception as e:
-        append_log(f"Error durante la actualización: {e}")
-        return -1
+async def ask_yes_no(title: str, message: str) -> bool:
+    future = asyncio.get_running_loop().create_future()
+    with ui.dialog() as dialog:
+        dialog.props('persistent')
+        with ui.card().classes('egg-panel w-[520px] max-w-full'):
+            ui.label(title).classes('text-xl font-bold text-white mb-2')
+            ui.label(message).classes('text-white')
 
-async def do_preparation() -> None:
-    if not check_sudo(): return
-    global btn_phase1
-    
-    try:
-        # Set button to executing state (red, pulsing)
-        if btn_phase1:
-            original_text = btn_phase1.text
-            btn_phase1.props('color=red disable')
-            btn_phase1.style('background-color: #ff0000 !important')
-            btn_phase1.classes(add='btn-executing')
-            btn_phase1.text = 'Ejecutando...'
-            btn_phase1.update()
-        
-        # Check if we should update eggs/calamares
-        if (calamares_update and calamares_update.value) and (prep_manual and not prep_manual.value):
-            if phase_status:
-                phase_status.text = 'Actualizando Eggs y Calamares'
-                phase_status.classes(add='status-executing')
-                phase_status.update()
-            set_progress(None, spinning=True)
-            rc = await do_update_eggs_and_calamares()
-            set_progress(0)
-            if phase_status:
-                phase_status.text = ''
-                phase_status.classes(remove='status-executing')
-                phase_status.update()
-            if rc == 0:
-                ui.notify('Actualización completada', type='positive')
-                await update_versions()
-                # Success state for button
-                if btn_phase1:
-                    btn_phase1.props(remove='color disable')
-                    btn_phase1.classes(remove='btn-executing', add='btn-success')
-                    btn_phase1.text = '✓ Actualizado'
-                    btn_phase1.update()
-            else:
-                ui.notify('Error en actualización', type='negative')
-                # Error state - return to normal
-                if btn_phase1:
-                    btn_phase1.props(remove='color disable')
-                    btn_phase1.style('background-color: #091f9e !important')
-                    btn_phase1.classes(remove='btn-executing btn-success')
-                    btn_phase1.text = original_text
-                    btn_phase1.update()
-            return
-    except Exception:
-        pass
+            def answer(value: bool) -> None:
+                dialog.close()
+                if not future.done():
+                    future.set_result(value)
 
-    # Regular preparation process
-    if phase_status:
-        phase_status.text = 'Ejecutando: Preparación'
-        phase_status.classes(add='status-executing')
-        phase_status.style(f"color: {COLORS['success']}")
-        phase_status.update()
-    
-    set_progress(None, spinning=True)
-    
-    eggs = await backend.get_cmd_eggs()
-    cmds = [
-        f"{eggs} kill -n",
-        f"{eggs} tools clean -n",
-        f"{eggs} dad -d",
-    ]
-    
-    try:
-        if calamares_update and calamares_update.value:
-            cmds.append(f"{eggs} calamares --install")
-    except Exception:
-        pass
+            with ui.row().classes('w-full justify-end mt-4'):
+                ui.button('No', on_click=lambda: answer(False)).props('flat')
+                ui.button('Sí', on_click=lambda: answer(True)).classes('egg-button')
+    dialog.open()
+    return await future
 
-    success = True
-    for c in cmds:
-        rc = await backend.run_stream(c, append_log)
-        if rc != 0:
-            success = False
-            set_progress(0)
-            if phase_status:
-                phase_status.text = ''
-                phase_status.classes(remove='status-executing')
-                phase_status.update()
-            ui.notify('Error durante la preparación', type='negative')
-            # Error state
-            if btn_phase1:
-                btn_phase1.props(remove='color disable')
-                btn_phase1.style('background-color: #091f9e !important')
-                btn_phase1.classes(remove='btn-executing btn-success')
-                btn_phase1.text = original_text if 'original_text' in locals() else 'Fase 1'
-                btn_phase1.update()
-            return
-            
+async def choose_copy_destination() -> str | None:
+    future = asyncio.get_running_loop().create_future()
+    with ui.dialog() as dialog:
+        dialog.props('persistent')
+        with ui.card().classes('egg-panel w-[650px] max-w-full'):
+            ui.label('Destino de la ISO').classes('text-xl font-bold text-white mb-3')
+            with ui.row().classes('w-full items-center'):
+                destination = ui.input(value=backend.get_home_dir(), label='Carpeta').props('dark').classes('grow')
+
+                async def browse_destination() -> None:
+                    await open_dir_picker(destination)
+
+                ui.button(
+                    icon='folder',
+                    on_click=browse_destination,
+                ).props('flat round').tooltip('Examinar carpetas')
+
+            def finish(value: str | None) -> None:
+                dialog.close()
+                if not future.done():
+                    future.set_result(value)
+
+            async def confirm() -> None:
+                if not destination.value or not await backend.is_directory(destination.value):
+                    ui.notify('La carpeta de destino no existe', type='warning')
+                    return
+                finish(destination.value)
+
+            with ui.row().classes('w-full justify-end mt-4'):
+                ui.button('Cancelar', on_click=lambda: finish(None)).props('flat')
+                ui.button('Seleccionar', on_click=confirm).classes('egg-button')
+    dialog.open()
+    return await future
+
+async def find_latest_iso() -> str | None:
+    command = "find /home/eggs -maxdepth 2 -type f -name '*.iso' -printf '%T@ %p\\n' 2>/dev/null | sort -nr | head -n 1"
+    rc, output = await backend.run_capture(command)
+    if rc != 0 or not output.strip():
+        return None
+    return output.strip().split(' ', 1)[1]
+
+async def copy_iso_to_destination(destination: str, iso_path: str | None) -> int:
+    state = current_ui_state()
+    phase_status = state.get('phase_status')
+    progress = state.get('progress')
+    copy_percent = state.get('copy_percent')
+    copy_counter_label = state.get('copy_counter_label')
+    if not await backend.command_exists('rsync'):
+        ui.notify('Se requiere rsync para copiar la ISO', type='negative')
+        return 127
+
+    real_user = shlex.quote(backend.get_real_user())
+    real_group = shlex.quote(backend.get_real_group())
+    destination_arg = shlex.quote(destination.rstrip('/') + '/')
+    ownership = f'--chown={real_user}:{real_group}'
+    if iso_path:
+        source = shlex.quote(iso_path)
+        command = f'rsync {ownership} --info=progress2 -h {source} {destination_arg}'
+    else:
+        command = f'rsync {ownership} --info=progress2 -ah /home/eggs/ {destination_arg}'
+
+    state['copying'] = True
+    state['copy_started_at'] = time.monotonic()
+    state.setdefault('copy_elapsed', 0.0)
+    if progress:
+        progress.props('color=deep-orange')
+        progress.update()
     set_progress(0)
-    if phase_status:
-        phase_status.text = ''
-        phase_status.classes(remove='status-executing')
-        phase_status.update()
-        
-    if replica_switch: replica_switch.enable(); replica_switch.update()
-    if edit_config_switch: edit_config_switch.enable(); edit_config_switch.update()
-    if fase2_btn: fase2_btn.enable(); fase2_btn.update()
-    
-    # Success state (green button)
-    if btn_phase1:
-        btn_phase1.props(remove='color disable')
-        btn_phase1.classes(remove='btn-executing', add='btn-success')
-        btn_phase1.text = '✓ Completado'
-        btn_phase1.update()
-    
-    ui.notify('Preparación completada', type='positive')
+    phase_status.text = 'Ejecutando: Copiar ISO'
+    phase_status.update()
 
-async def edit_config_dialog() -> None:
+    def log_copy_line(line: str) -> None:
+        append_log(line)
+        match = re.search(r'\b(\d{1,3})%', line)
+        if match:
+            percentage = min(100, int(match.group(1)))
+            set_progress(percentage / 100)
+            copy_percent.text = f'{percentage}%'
+            copy_percent.update()
+
+    append_log(f'$ {command}')
+    try:
+        rc = await backend.run_stream(command, log_copy_line)
+        if rc == 0:
+            state['copy_count'] = state.get('copy_count', 0) + 1
+            copy_counter_label.text = f"Copias realizadas: {state['copy_count']}"
+            copy_counter_label.update()
+            ui.notify('Copia completada', type='positive')
+        else:
+            ui.notify(f'Error al copiar (código {rc})', type='negative')
+        return rc
+    finally:
+        state['copying'] = False
+        if state.get('copy_started_at') is not None:
+            state['copy_elapsed'] = state.get('copy_elapsed', 0.0) + time.monotonic() - state['copy_started_at']
+            state['copy_started_at'] = None
+        set_progress(0)
+        if progress:
+            progress.props('color=light-blue')
+            progress.update()
+        copy_percent.text = '0%'
+        copy_percent.update()
+        phase_status.text = 'Estado: Esperando'
+        phase_status.update()
+
+async def run_iso_workflow() -> None:
+    state = current_ui_state()
+    phase_status = state.get('phase_status')
+    if not check_sudo():
+        return
+
+    eggs = await backend.get_cmd_eggs()
+    phase_status.text = 'Configurando creación de ISO'
+    phase_status.update()
+
+    if await ask_yes_no('Configuración del escritorio', '¿Desea copiar la configuración del escritorio (eggs tools skel)?'):
+        set_progress(None, spinning=True)
+        rc = await backend.run_stream(f'sudo {eggs} tools skel', append_log)
+        set_progress(0)
+        if rc != 0:
+            phase_status.text = 'Estado: Esperando'
+            phase_status.update()
+            ui.notify('Falló la copia de configuración del escritorio', type='negative')
+            return
+
+    if await ask_yes_no('Configuración de Eggs', '¿Desea editar la configuración de Eggs?'):
+        await edit_config_dialog()
+
+    clone_system = await ask_yes_no('Tipo de ISO', '¿Desea crear un clon del sistema (--clone)?')
+    if not await ask_yes_no('Confirmar generación', '¿Está seguro de iniciar la generación de la ISO?'):
+        phase_status.text = 'Estado: Esperando'
+        phase_status.update()
+        return
+
+    command = f'sudo {eggs} kill && {eggs} tools clean && {eggs} remaster'
+    if clone_system:
+        command += ' --clone'
+
+    append_log('=== INICIANDO GENERACIÓN DE ISO ===')
+    phase_status.text = 'Ejecutando: Generación de ISO'
+    phase_status.update()
+    state['iso_generating'] = True
+    state['iso_started_at'] = time.monotonic()
+    state.setdefault('iso_elapsed', 0.0)
+    set_progress(None, spinning=True)
+    try:
+        rc = await backend.run_stream(command, append_log)
+    finally:
+        state['iso_generating'] = False
+        if state.get('iso_started_at') is not None:
+            state['iso_elapsed'] = state.get('iso_elapsed', 0.0) + time.monotonic() - state['iso_started_at']
+            state['iso_started_at'] = None
+        set_progress(0)
+    if rc != 0:
+        phase_status.text = 'Estado: Esperando'
+        phase_status.update()
+        ui.notify('Error al generar la ISO', type='negative')
+        return
+
+    iso_path = await find_latest_iso()
+    await update_iso_size()
+    if not iso_path:
+        append_log('No se encontró una ISO en /home/eggs; se ofrecerá copiar el contenido de la carpeta.')
+
+    copy_failed = False
+    while True:
+        destination = await choose_copy_destination()
+        if destination is None:
+            if await ask_yes_no('Omitir copia', '¿Desea omitir la copia de la ISO?'):
+                break
+            continue
+        if await copy_iso_to_destination(destination, iso_path) != 0:
+            copy_failed = True
+            break
+        if not await ask_yes_no('Copiar otra vez', '¿Desea copiar la ISO a otro destino?'):
+            break
+
+    cleanup_failed = False
+    if await ask_yes_no('Limpiar archivos temporales', '¿Desea eliminar los archivos temporales de construcción (eggs kill)?'):
+        phase_status.text = 'Ejecutando: Limpiar archivos temporales'
+        phase_status.update()
+        set_progress(None, spinning=True)
+        cleanup_rc = await backend.run_stream(f'sudo {eggs} kill', append_log)
+        cleanup_failed = cleanup_rc != 0
+        set_progress(0)
+
+    phase_status.text = 'Estado: Esperando'
+    phase_status.update()
+    if copy_failed or cleanup_failed:
+        ui.notify('El proceso terminó con errores; revise el terminal', type='negative')
+    else:
+        ui.notify('Proceso finalizado', type='positive')
+
+async def edit_config_dialog() -> bool:
     append_log("DEBUG: edit_config_dialog called")
     try:
-        config_file = "/etc/penguins-eggs.d/eggs.yaml"
-        # import shlex # Already imported globally
-        # Use sudo to read the file
+        config_file = "/etc/penguins-eggs.d/custom.yaml"
         append_log(f"DEBUG: Reading {config_file}")
         rc, content = await backend.run_capture(f"sudo cat {shlex.quote(config_file)}")
         append_log(f"DEBUG: read rc={rc}, content_len={len(content) if content else 0}")
         if rc != 0 or not content:
-            ui.notify('No se pudo leer eggs.yaml (verifique permisos/sudo)', type='warning')
-            return
+            ui.notify('No se pudo leer custom.yaml. Verifique la autenticación sudo y el archivo del sistema.', type='warning')
+            return False
     except Exception as e:
         append_log(f"DEBUG: edit_config_dialog error: {e}")
         ui.notify(f"Error: {e}", type='negative')
-        return
+        return False
         
     try:
-        current = {
-            'root_passwd': '',
-            'snapshot_basename': '',
-            'snapshot_prefix': '',
-            'user_opt_passwd': '',
-        }
-        
-        for line in content.splitlines():
-            for key in list(current.keys()):
-                if line.startswith(f"{key}:"):
-                    current[key] = line.split(':', 1)[1].strip()
-                    
+        future = asyncio.get_running_loop().create_future()
         with ui.dialog() as d:
-            with ui.card().classes('w-[500px] egg-panel'):
-                ui.label('Editar Configuración ISO').classes('text-xl font-bold mb-4')
-                inputs = {}
-                def add_input(label, key, password=False):
-                    ui.label(label).classes('font-bold')
-                    # Add dark props and text-white class for visibility
-                    inp = ui.input(value=current.get(key, ''), password=password, password_toggle_button=password).props('dark input-class="text-white"').classes('w-full mb-2')
-                    inputs[key] = inp
-                
-                add_input('Contraseña de root:', 'root_passwd', password=True)
-                add_input('Nombre base del snapshot (ej: mi-distro):', 'snapshot_basename')
-                add_input('Prefijo del snapshot (ej: personalizada-):', 'snapshot_prefix')
-                add_input('Contraseña de usuario:', 'user_opt_passwd', password=True)
+            d.props('persistent')
+            with ui.card().classes('w-[700px] max-w-full egg-panel'):
+                ui.label('Editar configuración de Eggs').classes('text-xl font-bold mb-4')
+                ui.label(config_file).classes('text-gray-400 text-sm')
+                config_yaml = ui.textarea(value=content).props('dark autogrow input-class="text-white"').classes('w-full')
                 
                 async def on_save():
+                    temp_path = None
                     try:
-                        new_lines = []
-                        for line in content.splitlines(True):
-                            line_stripped = line.strip()
-                            replaced = False
-                            for key, inp in inputs.items():
-                                if line.startswith(f"{key}:"):
-                                    new_lines.append(f"{key}: {inp.value}\n")
-                                    replaced = True
-                                    break
-                            if not replaced:
-                                new_lines.append(line)
-                        temp_path = "/tmp/eggs_yaml_tmp"
-                        with open(temp_path, 'w') as f:
-                            f.writelines(new_lines)
-                        # Use sudo to install the file back
+                        with tempfile.NamedTemporaryFile(
+                            mode='w', encoding='utf-8', prefix='eggsmaker2-custom-',
+                            dir=backend.get_home_dir(), delete=False,
+                        ) as config_file_tmp:
+                            temp_path = config_file_tmp.name
+                            config_file_tmp.write(config_yaml.value.rstrip() + '\n')
                         rc = await backend.run_stream(f"sudo install -m 644 {shlex.quote(temp_path)} {shlex.quote(config_file)}", append_log)
                         if rc == 0:
                             ui.notify('Configuración guardada', type='positive')
                             d.close()
+                            if not future.done():
+                                future.set_result(True)
                         else:
                             ui.notify('No se pudo guardar la configuración', type='negative')
                     except Exception as e:
                         ui.notify(f'Error: {e}', type='negative')
+                    finally:
+                        if temp_path and os.path.exists(temp_path):
+                            os.unlink(temp_path)
+
+                def cancel_config() -> None:
+                    d.close()
+                    if not future.done():
+                        future.set_result(False)
                         
                 with ui.row().classes('w-full justify-end mt-4'):
-                    ui.button('Listo', on_click=d.close).classes('mr-2 bg-red-600 hover:bg-red-700')
+                    ui.button('Cancelar', on_click=cancel_config).classes('mr-2 bg-red-600 hover:bg-red-700')
                     ui.button('Guardar cambios', on_click=lambda: asyncio.create_task(on_save())).classes('egg-button')
         append_log("DEBUG: Opening dialog")
         d.open()
+        return await future
     except Exception as e:
         append_log(f"DEBUG: edit_config_dialog error: {e}")
         ui.notify(f"Error: {e}", type='negative')
+        return False
 
-async def do_phase2() -> None:
-    append_log("DEBUG: do_phase2 called")
-    if not check_sudo(): 
-        append_log("DEBUG: check_sudo failed in do_phase2")
+async def run_live_installer(installer: str) -> None:
+    if not check_sudo():
         return
-    
-    global btn_phase2
-    
-    # Set button to executing state
-    if btn_phase2:
-        original_text = btn_phase2.text
-        btn_phase2.props('color=red disable')
-        btn_phase2.style('background-color: #ff0000 !important')
-        btn_phase2.classes(add='btn-executing')
-        btn_phase2.text = 'Ejecutando...'
-        btn_phase2.update()
-    
-    eggs = await backend.get_cmd_eggs()
-    append_log(f"DEBUG: replica={replica_switch.value}, edit_config={edit_config_switch.value}")
-    
-    any_action = False
-    
-    if replica_switch and replica_switch.value:
-        any_action = True
-        # Use sudo for skel
-        rc = await backend.run_stream(f"sudo {eggs} tools skel", append_log)
-        if rc != 0:
-            ui.notify('Error al clonar escritorio', type='negative')
-            # Error state
-            if btn_phase2:
-                btn_phase2.props(remove='color disable')
-                btn_phase2.style('background-color: #091f9e !important')
-                btn_phase2.classes(remove='btn-executing btn-success')
-                btn_phase2.text = original_text if 'original_text' in locals() else 'Fase 2'
-                btn_phase2.update()
-            return
-            
-    if edit_config_switch and edit_config_switch.value:
-        any_action = True
-        await edit_config_dialog()
-    
-    # Success state
-    if any_action and btn_phase2:
-        btn_phase2.props(remove='color disable')
-        btn_phase2.classes(remove='btn-executing', add='btn-success')
-        btn_phase2.text = '✓ Completado'
-        btn_phase2.update()
-        ui.notify('Fase 2 completada', type='positive')
-    elif btn_phase2:
-        # No action taken, return to normal
-        btn_phase2.props(remove='color disable')
-        btn_phase2.style('background-color: #091f9e !important')
-        btn_phase2.classes(remove='btn-executing btn-success')
-        btn_phase2.text = original_text if 'original_text' in locals() else 'Fase 2'
-        btn_phase2.update()
 
-async def do_generate_iso() -> None:
-    if not check_sudo(): return
-    global iso_generating, iso_elapsed, auto_elapsed, btn_phase3
-    
-    # Set button to executing state (red, pulsing)
-    if btn_phase3:
-        original_text = btn_phase3.text
-        btn_phase3.props('color=red disable')
-        btn_phase3.style('background-color: #ff0000 !important')
-        btn_phase3.classes(add='btn-executing')
-        btn_phase3.text = 'Generando...'
-        btn_phase3.update()
-    
-    # Mark Phase 2 as complete if it's enabled but not already marked
-    if fase2_btn and not fase2_btn.props.get('disable'):
-        # Check if phase2 button is not already green
-        if 'btn-success' not in (fase2_btn.classes or ''):
-            fase2_btn.props(remove='color')
-            fase2_btn.classes(remove='btn-executing', add='btn-success')
-            fase2_btn.text = '✓ Completado'
-            fase2_btn.update()
-    
-    iso_generating = True
-    iso_elapsed = 0
-    if phase_status:
-        phase_status.text = 'Ejecutando: Fase 3 (Generar ISO)'
-        phase_status.classes(add='status-executing')
-        phase_status.style(f"color: {COLORS['success']}")
+    if installer == 'Calamares':
+        command = 'sudo eggs sysinstall calamares'
+        append_log('$ sudo eggs sysinstall calamares')
+        phase_status.text = 'Ejecutando: Instalación Live con Calamares'
         phase_status.update()
+        set_progress(None, spinning=True)
+        try:
+            rc = await backend.run_stream(command, append_log)
+            ui.notify('Calamares finalizó' if rc == 0 else 'Calamares terminó con errores',
+                      type='positive' if rc == 0 else 'negative')
+        finally:
+            set_progress(0)
+            phase_status.text = 'Estado: Esperando'
+            phase_status.update()
+        return
+
+    terminals = ('x-terminal-emulator', 'gnome-terminal', 'xfce4-terminal', 'konsole', 'xterm')
+    terminal = next((name for name in terminals if shutil.which(name)), None)
+    if not terminal:
+        ui.notify('No se encontró una terminal gráfica para iniciar Krill', type='negative')
+        return
+
+    command = "sudo eggs sysinstall krill; printf '\\nKrill finalizó. '; read -r -p 'Presione Enter para cerrar...'"
+    if terminal in ('gnome-terminal', 'x-terminal-emulator'):
+        args = [terminal, '--', 'bash', '-lc', command]
+    elif terminal == 'xfce4-terminal':
+        args = [terminal, '--title=Eggsmaker 2 - Krill', '-e', f"bash -lc {shlex.quote(command)}"]
+    elif terminal == 'konsole':
+        args = [terminal, '--title', 'Eggsmaker 2 - Krill', '-e', 'bash', '-lc', command]
+    else:
+        args = [terminal, '-T', 'Eggsmaker 2 - Krill', '-e', 'bash', '-lc', command]
+
+    try:
+        process = await asyncio.create_subprocess_exec(*args)
+        phase_status.text = 'Ejecutando: Instalación Live con Krill'
+        phase_status.update()
+        set_progress(None, spinning=True)
+        append_log('$ sudo eggs sysinstall krill (terminal interactiva)')
+        ui.notify('Krill se abrió en una terminal gráfica', type='positive')
+
+        async def wait_for_krill() -> None:
+            rc = await process.wait()
+            set_progress(0)
+            phase_status.text = 'Estado: Esperando'
+            phase_status.update()
+            if rc != 0:
+                ui.notify('La terminal de Krill terminó con errores', type='negative')
+
+        asyncio.create_task(wait_for_krill())
+    except OSError as error:
+        append_log(f'No se pudo abrir Krill: {error}')
+        ui.notify(f'No se pudo abrir Krill: {error}', type='negative')
+
+def package_list_dir() -> str:
+    return os.path.join(backend.get_home_dir(), f'{socket.gethostname()}-pak')
+
+def load_package_group(group: str) -> list[str]:
+    filename = {
+        'Nativos': 'lista-nativo.txt',
+        'AUR': 'lista-aur.txt',
+        'Chaotic-AUR': 'lista-chaotic-aur.txt',
+        'Flatpak': 'lista-flatpak.txt',
+    }.get(group)
+    if not filename:
+        return []
+    try:
+        with open(os.path.join(package_list_dir(), filename), encoding='utf-8') as package_file:
+            return sorted({line.strip() for line in package_file if line.strip()})
+    except OSError:
+        return []
+
+def refresh_package_options(state: dict | None = None) -> None:
+    state = state or current_ui_state()
+    package_group_select = state.get('package_group_select')
+    package_select = state.get('package_select')
+    package_status = state.get('package_status')
+    if package_group_select is None or package_select is None:
+        return
+    packages = load_package_group(package_group_select.value or 'Nativos')
+    package_select.options = packages
+    package_select.value = []
+    package_select.update()
+    if package_status:
+        package_status.text = f'{len(packages)} paquetes disponibles'
+        package_status.update()
+
+def clear_package_lists() -> None:
+    state = current_ui_state()
+    package_status = state.get('package_status')
+    with ui.dialog() as dialog:
+        with ui.card().classes('egg-panel'):
+            ui.label('¿Vaciar las listas de paquetes recopiladas?').classes('text-white font-bold')
+            ui.label(package_list_dir()).classes('text-gray-300')
+
+            async def confirm_clear() -> None:
+                list_files = ' '.join(
+                    shlex.quote(os.path.join(package_list_dir(), filename))
+                    for filename in (
+                        'lista-nativo.txt', 'lista-aur.txt', 'lista-chaotic-aur.txt', 'lista-flatpak.txt'
+                    )
+                )
+                rc = await backend.run_stream(f'rm -f {list_files}', append_log)
+                dialog.close()
+                refresh_package_options(state)
+                package_status.text = 'Listas eliminadas' if rc == 0 else 'No se pudieron eliminar las listas'
+                package_status.update()
+                ui.notify(package_status.text, type='positive' if rc == 0 else 'negative')
+
+            with ui.row().classes('w-full justify-end'):
+                ui.button('Cancelar', on_click=dialog.close)
+                ui.button('Vaciar listas', on_click=confirm_clear).props('color=negative')
+    dialog.open()
+
+async def collect_package_lists() -> None:
+    state = current_ui_state()
+    package_status = state.get('package_status')
+    phase_status = state.get('phase_status')
+    if not check_sudo():
+        return
+
+    package_status.text = 'Recopilando paquetes instalados...'
+    package_status.update()
+    phase_status.text = 'Ejecutando: Recopilar paquetes'
+    phase_status.update()
     set_progress(None, spinning=True)
-    
-    eggs = await backend.get_cmd_eggs()
-    if iso_max_compression.value:
-        cmd = f"sudo {eggs} produce --pendrive -n"
-    elif iso_include_data.value:
-        cmd = f"sudo {eggs} produce --clone -n"
+    try:
+        _, release = await backend.run_capture('cat /etc/os-release')
+        release_values = {}
+        for line in release.splitlines():
+            if '=' in line:
+                key, value = line.split('=', 1)
+                release_values[key] = value.strip().strip('"')
+        distro_ids = f"{release_values.get('ID', '')} {release_values.get('ID_LIKE', '')}".lower()
+        is_arch = any(name in distro_ids for name in ('arch', 'manjaro', 'endeavour', 'cachy'))
+        is_debian = any(name in distro_ids for name in ('debian', 'ubuntu', 'mint', 'pop'))
+        if not is_arch and not is_debian:
+            raise RuntimeError('El gestor de paquetes solo admite familias Arch y Debian/Ubuntu')
+
+        groups = {name: [] for name in PACKAGE_GROUPS}
+        if is_arch:
+            _, installed = await backend.run_capture("pacman -Qqe | sort | grep -vwE '^(base|base-devel)$'")
+            _, aur = await backend.run_capture('pacman -Qqem | sort')
+            _, chaotic_repo = await backend.run_capture(
+                "pacman -Sl chaotic-aur 2>/dev/null | awk '$1 == \"chaotic-aur\" {print $2}'"
+            )
+            installed_names = set(installed.splitlines())
+            aur_names = set(aur.splitlines())
+            chaotic_names = set(chaotic_repo.splitlines())
+            foreign_names = installed_names - aur_names
+            groups['AUR'] = sorted(aur_names - chaotic_names)
+            groups['Chaotic-AUR'] = sorted(foreign_names & chaotic_names)
+            groups['Nativos'] = sorted(foreign_names - chaotic_names)
+        else:
+            _, native = await backend.run_capture('apt-mark showmanual | sort')
+            groups['Nativos'] = sorted(set(native.splitlines()))
+
+        user = shlex.quote(os.environ.get('SUDO_USER') or getpass.getuser())
+        _, flatpak = await backend.run_capture(
+            f"command sudo -u {user} -H env DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u {user})/bus "
+            f"XDG_RUNTIME_DIR=/run/user/$(id -u {user}) flatpak list --app --columns=application 2>/dev/null"
+        )
+        groups['Flatpak'] = sorted(set(flatpak.splitlines()))
+
+        list_dir = package_list_dir()
+        real_user = shlex.quote(backend.get_real_user())
+        real_group = shlex.quote(backend.get_real_group())
+        quoted_list_dir = shlex.quote(list_dir)
+        list_files = ' '.join(
+            shlex.quote(os.path.join(list_dir, filename))
+            for filename in ('lista-nativo.txt', 'lista-aur.txt', 'lista-chaotic-aur.txt', 'lista-flatpak.txt')
+        )
+        rc = await backend.run_stream(
+            f'install -d -o {real_user} -g {real_group} {quoted_list_dir} && '
+            f'(chown {real_user}:{real_group} {list_files} 2>/dev/null || true)',
+            append_log,
+        )
+        if rc != 0:
+            raise PermissionError(f'No se pudo preparar la carpeta {list_dir}')
+        filenames = {
+            'Nativos': 'lista-nativo.txt',
+            'AUR': 'lista-aur.txt',
+            'Chaotic-AUR': 'lista-chaotic-aur.txt',
+            'Flatpak': 'lista-flatpak.txt',
+        }
+        for group, filename in filenames.items():
+            with open(os.path.join(list_dir, filename), 'w', encoding='utf-8') as package_file:
+                package_file.write(''.join(f'{package}\n' for package in groups[group]))
+
+        refresh_package_options(state)
+        summary = ' · '.join(f'{group}: {len(packages)}' for group, packages in groups.items())
+        package_status.text = f'Listas guardadas en {package_list_dir()} | {summary}'
+        package_status.update()
+        append_log(f'Listas de paquetes generadas: {summary}')
+        ui.notify('Listas de paquetes actualizadas', type='positive')
+    except Exception as error:
+        append_log(f'Error al recopilar paquetes: {error}')
+        package_status.text = f'Error: {error}'
+        package_status.update()
+        ui.notify(f'Error al recopilar paquetes: {error}', type='negative')
+    finally:
+        set_progress(0)
+        phase_status.text = 'Estado: Esperando'
+        phase_status.update()
+
+async def manage_packages(remove: bool = False) -> None:
+    state = current_ui_state()
+    package_group_select = state.get('package_group_select')
+    package_select = state.get('package_select')
+    package_status = state.get('package_status')
+    phase_status = state.get('phase_status')
+    if not check_sudo():
+        return
+    group = package_group_select.value
+    selected = package_select.value or []
+    if not selected:
+        ui.notify('Seleccione al menos un paquete', type='warning')
+        return
+
+    names = ' '.join(shlex.quote(package) for package in selected)
+    user = shlex.quote(os.environ.get('SUDO_USER') or getpass.getuser())
+    if group == 'Flatpak':
+        action = 'uninstall -y --user' if remove else 'install -y --user'
+        command = (
+            f'command sudo -u {user} -H env DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u {user})/bus '
+            f'XDG_RUNTIME_DIR=/run/user/$(id -u {user}) flatpak {action} {names}'
+        )
+    elif group == 'AUR':
+        if not await backend.command_exists('yay'):
+            ui.notify('Se requiere yay para instalar o quitar paquetes AUR', type='warning')
+            return
+        action = '-Rns --noconfirm' if remove else '-S --needed --noconfirm'
+        command = f'command sudo -u {user} -H yay {action} {names}'
+    elif group == 'Chaotic-AUR':
+        action = '-Rns --noconfirm' if remove else '-S --needed --noconfirm'
+        package_names = selected if remove else [f'chaotic-aur/{package}' for package in selected]
+        command = f"sudo pacman {action} " + ' '.join(shlex.quote(package) for package in package_names)
     else:
-        cmd = f"sudo {eggs} produce --noicon -n"
-        
-    rc = await backend.run_stream(cmd, append_log)
-    iso_generating = False
-    set_progress(0)
-    
-    if rc == 0:
-        update_iso_size()
-        # Success state (green button)
-        if btn_phase3:
-            btn_phase3.props(remove='color disable')
-            btn_phase3.classes(remove='btn-executing', add='btn-success')
-            btn_phase3.text = '✓ ISO Generada'
-            btn_phase3.update()
-        if phase_status:
-            phase_status.classes(remove='status-executing', add='status-success')
-            phase_status.update()
-        ui.notify('ISO generada', type='positive')
-    else:
-        # Error state - return to normal
-        if btn_phase3:
-            btn_phase3.props(remove='color disable')
-            btn_phase3.style('background-color: #091f9e !important')
-            btn_phase3.classes(remove='btn-executing btn-success')
-            btn_phase3.text = original_text if 'original_text' in locals() else 'Fase 3'
-            btn_phase3.update()
-        if phase_status:
-            phase_status.classes(remove='status-executing')
-            phase_status.update()
-        ui.notify('Error al generar ISO', type='negative')
+        action = '-Rns --noconfirm' if remove else '-S --needed --noconfirm'
+        has_pacman = await backend.command_exists('pacman')
+        command = f'sudo pacman {action} {names}' if has_pacman else (
+            f'sudo apt-get remove -y {names}' if remove else f'sudo apt-get install -y {names}'
+        )
+
+    operation = 'Desinstalando' if remove else 'Instalando'
+    phase_status.text = f'Ejecutando: {operation} paquetes ({group})'
+    phase_status.update()
+    package_status.text = f'{operation} {len(selected)} paquetes...'
+    package_status.update()
+    set_progress(None, spinning=True)
+    append_log(f'$ {command}')
+    try:
+        rc = await backend.run_stream(command, append_log)
+        package_status.text = 'Proceso completado' if rc == 0 else f'Proceso finalizado con código {rc}'
+        package_status.update()
+        ui.notify('Proceso completado' if rc == 0 else 'El gestor de paquetes informó errores',
+                  type='positive' if rc == 0 else 'negative')
+        if rc == 0:
+            await collect_package_lists()
+    finally:
+        set_progress(0)
+        phase_status.text = 'Estado: Esperando'
+        phase_status.update()
 
 async def open_dir_picker(target_input=None) -> None:
     append_log("DEBUG: open_dir_picker called")
     try:
-        current_path = backend.get_home_dir()
+        requested_path = target_input.value if target_input else backend.get_home_dir()
+        current_path = requested_path if await backend.is_directory(requested_path) else backend.get_home_dir()
         append_log(f"DEBUG: current_path={current_path}")
     
         with ui.dialog() as d:
@@ -779,16 +950,19 @@ async def open_dir_picker(target_input=None) -> None:
                     path_label.text = path
                     list_container.clear()
                     
-                    items = backend.list_directories(path)
+                    items = await backend.list_directories(path)
                     with list_container:
                         if not items and path != '/':
                              # Fallback if empty but not root, allow going up
                              items = [{'name': '..', 'path': os.path.dirname(path), 'type': 'dir'}]
 
                         for item in items:
-                            # Use flat buttons for better click handling
                             icon = 'folder' if item['type'] == 'dir' else 'description'
-                            btn = ui.button(item['name'], icon=icon, on_click=lambda _, p=item['path']: asyncio.create_task(load_dir(p)))
+
+                            async def navigate(_, selected_path=item['path']) -> None:
+                                await load_dir(selected_path)
+
+                            btn = ui.button(item['name'], icon=icon, on_click=navigate)
                             btn.props('flat align=left no-caps').classes('w-full text-left')
 
                 
@@ -799,8 +973,6 @@ async def open_dir_picker(target_input=None) -> None:
                     def select():
                         if target_input:
                             target_input.value = current_path
-                        elif dest_dir_input:
-                            dest_dir_input.value = current_path
                         d.close()
                     ui.button('Seleccionar', on_click=select).classes('egg-button')
         d.open()
@@ -808,539 +980,91 @@ async def open_dir_picker(target_input=None) -> None:
         append_log(f"DEBUG: open_dir_picker error: {e}")
         ui.notify(f"Error al abrir selector: {e}", type='negative')
 
-async def ask_copy_options_auto() -> bool:
-    loop = asyncio.get_running_loop()
-    future = loop.create_future()
-    
-    with ui.dialog() as d:
-        # Removed 'persistent' to allow closing with ESC or clicking outside
-        with ui.card().classes('w-[500px] egg-panel'):
-            ui.label('Opciones de Copia').classes('text-xl font-bold mb-4 text-white')
-            
-            # Speed
-            speed_switch = ui.switch('Copia Rápida', value=False).props('dense').classes('mb-4')
-            
-            # Destination
-            ui.label('Directorio Destino:').classes('font-bold mb-1 text-white')
-            with ui.row().classes('w-full items-center mb-6'):
-                dest_input = ui.input(value=os.path.expanduser('~')).props('dense dark input-class="text-white"').classes('grow')
-                ui.button(icon='folder', on_click=lambda: open_dir_picker(dest_input)).props('flat dense').classes('ml-1')
-
-            def on_confirm():
-                if copy_speed_switch:
-                    copy_speed_switch.value = speed_switch.value
-                if dest_dir_input:
-                    dest_dir_input.value = dest_input.value
-                d.close()
-                future.set_result(True)
-                
-            def on_cancel():
-                d.close()
-                future.set_result(False)
-
-            with ui.row().classes('w-full justify-end'):
-                ui.button('Cancelar', on_click=on_cancel).classes('mr-2 bg-red-600 hover:bg-red-700')
-                ui.button('Continuar', on_click=on_confirm).classes('egg-button')
-    
-    d.open()
-    return await future
-
-async def do_copy_iso() -> None:
-    append_log("DEBUG: do_copy_iso called")
-    global copying, copy_elapsed, copy_count, copy_state, btn_copy_iso
-    
-    # Set button to executing state (red, pulsing)
-    if btn_copy_iso:
-        original_text = btn_copy_iso.text
-        btn_copy_iso.props('color=red disable')
-        btn_copy_iso.style('background-color: #ff0000 !important')
-        btn_copy_iso.classes(add='btn-executing')
-        btn_copy_iso.text = 'Copiando...'
-        btn_copy_iso.update()
-    
-    copying = True
-    copy_elapsed = 0
-    # Reset copy state
-    copy_state['progress'] = 0.0
-    copy_state['percent'] = 0
-    if phase_status:
-        phase_status.text = 'Ejecutando: Copiar ISO'
-        phase_status.classes(add='status-executing')
-        phase_status.style(f"color: {COLORS['success']}")
-        phase_status.update()
-    # Change progress bar color to intense orange for copy operation
-    if progress:
-        progress.props('color=deep-orange')
-        progress.update()
-    set_progress(0)  # Start with 0% instead of spinning
-    
-    # Determine destination directory
-    dest_dir = dest_dir_input.value if (dest_dir_input and dest_dir_input.value) else os.path.expanduser('~')
-    if not os.path.isdir(dest_dir):
-        ui.notify('Directorio destino no existe', type='warning')
-        append_log(f'Directorio destino no existe: {dest_dir}')
-        copying = False
-        set_progress(0)
-        if phase_status: phase_status.text = ''; phase_status.update()
-        return
-        
-    # Find ISO file
-    src_iso_path = None
-    possible_src_dirs = ["/home/eggs/", "/home/eggs/.mnt/"] # Prioritize /home/eggs/
-    
-    for p in possible_src_dirs:
-        if os.path.exists(p):
-            try:
-                files = [f for f in os.listdir(p) if f.endswith('.iso')]
-                if files:
-                    src_iso_path = os.path.join(p, files[0])
-                    break
-            except PermissionError:
-                continue
-                
-    if not src_iso_path:
-        append_log('No se encontraron archivos ISO para copiar')
-        append_log(f"DEBUG: Checked paths: {possible_src_dirs}")
-        ui.notify('No se encontró ISO para copiar', type='warning')
-        copying = False
-        set_progress(0)
-        if phase_status: phase_status.text = ''; phase_status.update()
-        return
-            
-    try:
-        append_log(f"DEBUG: Found ISO: {src_iso_path}")
-        dst = os.path.join(dest_dir, os.path.basename(src_iso_path))
-        
-        # Define blocking copy function to run in thread
-        def blocking_copy():
-            """Blocking file copy that runs in thread pool"""
-            total = os.path.getsize(src_iso_path)
-            copied = 0
-            chunk = 1024 * 1024  # 1MB chunks
-            
-            with open(src_iso_path, 'rb') as s, open(dst, 'wb') as d:
-                while True:
-                    data = s.read(chunk)
-                    if not data:
-                        break
-                    d.write(data)
-                    copied += len(data)
-                    
-                    # Update shared state
-                    copy_state['progress'] = copied / total
-                    copy_state['percent'] = int((copied / total) * 100)
-                    
-                    # Add delay for slow copy if not rapid mode
-                    if not (copy_speed_switch and copy_speed_switch.value):
-                        time.sleep(0.01)
-            
-            return total
-        
-        # Start progress updater - only update shared state, not UI directly
-        async def update_copy_progress():
-            """Update shared state for UI polling, no direct UI updates"""
-            while copying:
-                # Just sleep and let the timer update the UI
-                # UI updates happen in update_timers() which runs in proper context
-                await asyncio.sleep(0.1)
-        
-        # Run copy and progress updater concurrently
-        progress_task = asyncio.create_task(update_copy_progress())
-        
-        # Try direct copy first (run in thread to not block event loop)
-        try:
-            total = await asyncio.to_thread(blocking_copy)
-        except PermissionError:
-            # Fallback to sudo copy if direct copy fails due to permissions
-            if not check_sudo(): 
-                copying = False
-                set_progress(0)
-                if phase_status: phase_status.text = ''; phase_status.update()
-                return
-                
-            append_log('Permiso denegado. Intentando copia con sudo...')
-            # Use dd with sudo for robust copying
-            cmd = f"sudo dd if={shlex.quote(src_iso_path)} of={shlex.quote(dst)} bs=4M status=progress"
-            # We can't easily track progress with dd in run_stream without parsing, 
-            # so we'll just run it. Progress bar will remain spinning.
-            rc = await backend.run_stream(cmd, append_log)
-            if rc != 0:
-                raise Exception("Fallo la copia con sudo")
-                    
-        copy_count += 1
-        if copy_counter_label:
-            copy_counter_label.text = f"Copias realizadas: {copy_count}"; copy_counter_label.update()
-        append_log(f"ISO copiada a: {dst}")
-        
-        # Success state (green button)
-        if btn_copy_iso:
-            btn_copy_iso.props(remove='color disable')
-            btn_copy_iso.classes(remove='btn-executing', add='btn-success')
-            btn_copy_iso.text = '✓ Copiada'
-            btn_copy_iso.update()
-        
-        if phase_status:
-            phase_status.classes(remove='status-executing', add='status-success')
-            phase_status.update()
-        
-        ui.notify('ISO copiada exitosamente', type='positive')
-    except Exception as e:
-        append_log(f"Error al copiar la ISO: {e}")
-        
-        # Error state - return to normal
-        if btn_copy_iso:
-            btn_copy_iso.props(remove='color disable')
-            btn_copy_iso.style('background-color: #091f9e !important')
-            btn_copy_iso.classes(remove='btn-executing btn-success')
-            btn_copy_iso.text = original_text if 'original_text' in locals() else 'Copiar ISO'
-            btn_copy_iso.update()
-        
-        if phase_status:
-            phase_status.classes(remove='status-executing')
-            phase_status.update()
-        
-        ui.notify(f'Error al copiar la ISO: {e}', type='negative')
-    finally:
-        copying = False
-        # Cancel progress updater task if it exists
-        if 'progress_task' in locals():
-            progress_task.cancel()
-            try:
-                await progress_task
-            except asyncio.CancelledError:
-                pass
-        set_progress(0)
-        # Reset progress bar color back to light-blue
-        if progress:
-            progress.props('color=light-blue')
-            progress.update()
-        if copy_percent:
-            copy_percent.text = "0%"
-            copy_percent.style('color: white; font-size: 18px; font-weight: bold;')
-            copy_percent.classes(remove='status-executing status-success')
-            copy_percent.update()
-        if phase_status: 
-            phase_status.text = ''
-            phase_status.classes(remove='status-executing status-success')
-            phase_status.update()
-
-async def do_clean_session() -> None:
-    append_log("DEBUG: do_clean_session called")
-    if not check_sudo(): 
-        append_log("DEBUG: check_sudo failed in do_clean_session")
-        return
-    target = '/home/eggs'
-    
-    async def _get_size() -> str:
-        try:
-            # Use sudo to check size as /home/eggs might be root owned
-            append_log("DEBUG: Running du -sh")
-            rc, out = await backend.run_capture(f"sudo du -sh {shlex.quote(target)} || true")
-            append_log(f"DEBUG: du rc={rc}, out={out}")
-            if out: return out.strip().split()[0]
-            return 'No existe/Vacío'
-        except Exception as e:
-            append_log(f"DEBUG: du error: {e}")
-            return 'Desconocido'
-
-    size_text = await _get_size()
-    append_log(f"DEBUG: size_text={size_text}")
-    
-    with ui.dialog() as dlg:
-        with ui.card().classes('egg-panel'):
-            ui.label('¿Eliminar la carpeta /home/eggs por completo?').classes('text-bold text-white')
-            size_label = ui.label(f"Tamaño actual: {size_text}").classes('text-white')
-            
-            async def confirm():
-                dlg.close()
-                if phase_status:
-                    phase_status.text = 'Ejecutando: Limpiando sesión'
-                    phase_status.style(f"color: {COLORS['success']}")
-                    phase_status.update()
-                set_progress(None, spinning=True)
-                append_log(f"Eliminando {target} ...")
-                import shlex
-                # Ensure sudo is used for deletion
-                rc = await backend.run_stream(f"sudo rm -rf {shlex.quote(target)}", append_log)
-                set_progress(0)
-                if phase_status:
-                    phase_status.text = ''
-                    phase_status.update()
-                if rc == 0:
-                    ui.notify('Sesión limpiada', type='positive')
-                    if console: console.clear()
-                    
-                    # Reset timers
-                    global copy_elapsed, iso_elapsed, auto_elapsed, copy_count
-                    copy_elapsed = 0
-                    iso_elapsed = 0
-                    auto_elapsed = 0
-                    copy_count = 0
-                    
-                    if copy_time_label: copy_time_label.text = "Copia: 00:00:00"; copy_time_label.update()
-                    if iso_time_label: iso_time_label.text = "Generación: 00:00:00"; iso_time_label.update()
-                    if Total_time_label: Total_time_label.text = "Total: 00:00:00"; Total_time_label.update()
-                    
-                    # Reset progress bar
-                    if progress:
-                        progress.value = 0
-                        progress.props(remove='indeterminate')
-                        progress.props('color=light-blue')
-                        progress.update()
-                    
-                    if copy_percent:
-                        copy_percent.text = "0%"
-                        copy_percent.style('color: white; font-size: 18px; font-weight: bold;')
-                        copy_percent.update()
-                    
-                    if copy_counter_label:
-                        copy_counter_label.text = "Copias realizadas: 0"
-                        copy_counter_label.update()
-
-                    # Reset switches
-                    if prep_manual: prep_manual.value = True; prep_manual.update()
-                    if calamares_update: calamares_update.value = False; calamares_update.update()
-                    if replica_switch: replica_switch.value = False; replica_switch.update()
-                    if edit_config_switch: edit_config_switch.value = False; edit_config_switch.update()
-                    if iso_include_data: iso_include_data.value = False; iso_include_data.update()
-                    if iso_max_compression: iso_max_compression.value = False; iso_max_compression.update()
-                    if copy_speed_switch: copy_speed_switch.value = False; copy_speed_switch.update()
-                    
-                    # Reset all buttons to original state
-                    if btn_phase1:
-                        btn_phase1.props(remove='color disable')
-                        btn_phase1.style('background-color: #091f9e !important')
-                        btn_phase1.classes(remove='btn-executing btn-success')
-                        btn_phase1.text = 'Fase 1'
-                        btn_phase1.update()
-                    
-                    if btn_phase2:
-                        btn_phase2.props(remove='color disable')
-                        btn_phase2.style('background-color: #091f9e !important')
-                        btn_phase2.classes(remove='btn-executing btn-success')
-                        btn_phase2.text = 'Fase 2'
-                        btn_phase2.update()
-                    
-                    # Also reset fase2_btn (the actual Fase 2 button variable)
-                    if fase2_btn:
-                        fase2_btn.props(remove='color disable')
-                        fase2_btn.style('background-color: #091f9e !important')
-                        fase2_btn.classes(remove='btn-executing btn-success')
-                        fase2_btn.text = 'Fase 2'
-                        fase2_btn.update()
-                    
-                    if btn_phase3:
-                        btn_phase3.props(remove='color disable')
-                        btn_phase3.style('background-color: #091f9e !important')
-                        btn_phase3.classes(remove='btn-executing btn-success')
-                        btn_phase3.text = 'Fase 3'
-                        btn_phase3.update()
-                    
-                    if btn_copy_iso:
-                        btn_copy_iso.props(remove='color disable')
-                        btn_copy_iso.style('background-color: #091f9e !important')
-                        btn_copy_iso.classes(remove='btn-executing btn-success')
-                        btn_copy_iso.text = 'Copiar ISO'
-                        btn_copy_iso.update()
-                    
-                    if btn_auto:
-                        btn_auto.props(remove='color disable')
-                        btn_auto.style('background-color: #091f9e !important')
-                        btn_auto.classes(remove='btn-executing btn-success')
-                        btn_auto.text = 'AUTO'
-                        btn_auto.update()
-                    
-                    # Reset ISO size label
-                    if iso_size_label:
-                        iso_size_label.text = 'Tamaño ISO: N/A'
-                        iso_size_label.update()
-                else:
-                    ui.notify('Error al limpiar sesión', type='negative')
-                    
-            with ui.row():
-                ui.button('Confirmar', on_click=confirm).classes('egg-button')
-                ui.button('Cancelar', on_click=dlg.close)
-    dlg.open()
-
-async def do_auto() -> None:
-    global auto_running, auto_elapsed, btn_auto
-    
-    # Set button to executing state (red, pulsing)
-    if btn_auto:
-        btn_auto.props('color=red disable')
-        btn_auto.style('background-color: #ff0000 !important')
-        btn_auto.classes(add='btn-executing')
-        btn_auto.text = 'Ejecutando AUTO...'
-        btn_auto.update()
-
-    auto_running = True
-    auto_elapsed = 0
-    
-    try:
-        await do_preparation()
-        await do_generate_iso()
-        
-        # Ask for copy options
-        if not await ask_copy_options_auto():
-            ui.notify('Proceso Auto cancelado por el usuario', type='warning')
-            auto_running = False
-            # Reset button if cancelled
-            if btn_auto:
-                btn_auto.props(remove='color disable')
-                btn_auto.style('background-color: #091f9e !important')
-                btn_auto.classes(remove='btn-executing btn-success')
-                btn_auto.text = 'AUTO'
-                btn_auto.update()
-            return
-
-        await do_copy_iso()
-        
-        # Success state (green button)
-        if btn_auto:
-            btn_auto.props(remove='color disable')
-            btn_auto.classes(remove='btn-executing', add='btn-success')
-            btn_auto.text = '✓ AUTO Completado'
-            btn_auto.update()
-            
-    except Exception as e:
-        ui.notify(f'Error en proceso AUTO: {e}', type='negative')
-        # Error state - return to normal
-        if btn_auto:
-            btn_auto.props(remove='color disable')
-            btn_auto.style('background-color: #091f9e !important')
-            btn_auto.classes(remove='btn-executing btn-success')
-            btn_auto.text = 'AUTO'
-            btn_auto.update()
-    finally:
-        auto_running = False
+def format_elapsed(seconds: float) -> str:
+    whole_seconds = max(0, int(seconds))
+    hours, remainder = divmod(whole_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f'{hours:02d}:{minutes:02d}:{secs:02d}'
 
 async def update_timers() -> None:
-    global copy_elapsed, iso_elapsed, auto_elapsed
-    if copying:
-        copy_elapsed += 1
-        if copy_time_label:
-            copy_time_label.text = f"Copia: {time.strftime('%H:%M:%S', time.gmtime(copy_elapsed))}"
-            copy_time_label.update()
-        # Update copy progress if in copy mode
-        if copy_state and copy_percent:
-            pct = copy_state.get('percent', 0)
-            p = copy_state.get('progress', 0.0)
-            set_progress(p)
-            copy_percent.text = f"{pct}%"
-            copy_percent.style('color: red; font-size: 18px; font-weight: bold;')
-            copy_percent.update()
-    if iso_generating:
-        iso_elapsed += 1
-        if iso_time_label:
-            iso_time_label.text = f"Generación: {time.strftime('%H:%M:%S', time.gmtime(iso_elapsed))}"
-            iso_time_label.update()
-    if auto_running:
-        auto_elapsed += 1
-    # Always update total timer as sum of all elapsed times
-    total = copy_elapsed + iso_elapsed + auto_elapsed
-    if Total_time_label:
-        Total_time_label.text = f"Total: {time.strftime('%H:%M:%S', time.gmtime(total))}"
-        Total_time_label.update()
+    state = current_ui_state()
+    now = time.monotonic()
+    copy_total = state.get('copy_elapsed', 0.0) + (
+        now - state['copy_started_at'] if state.get('copying') and state.get('copy_started_at') else 0
+    )
+    iso_total = state.get('iso_elapsed', 0.0) + (
+        now - state['iso_started_at'] if state.get('iso_generating') and state.get('iso_started_at') else 0
+    )
+    copy_time_label = state.get('copy_time_label')
+    iso_time_label = state.get('iso_time_label')
+    total_time_label = state.get('total_time_label')
+    if copy_time_label:
+        copy_time_label.text = f"Copia: {format_elapsed(copy_total)}"
+        copy_time_label.update()
+    if iso_time_label:
+        iso_time_label.text = f"Generación: {format_elapsed(iso_total)}"
+        iso_time_label.update()
+    total = copy_total + iso_total
+    if total_time_label:
+        total_time_label.text = f"Total: {format_elapsed(total)}"
+        total_time_label.update()
 
 @ui.page('/')
 def main_page():
-    global versions_eggs, versions_calamares
+    global versions_eggs
     global phase_status, copy_percent, copy_counter_label, copy_time_label, iso_time_label, Total_time_label
     global progress, console
-    global prep_manual, calamares_update, replica_switch, edit_config_switch, iso_include_data, iso_max_compression, copy_speed_switch
-    global iso_size_label, dest_dir_input, fase2_btn
-    global btn_phase1, btn_phase2, btn_phase3, btn_copy_iso, btn_auto, btn_clean
+    global iso_size_label
 
     ui.add_head_html("<style>{}</style>".format(THEME_CSS))
 
     with ui.header().classes('items-center justify-between egg-panel relative'):
         with ui.row().classes('items-center'):
-            logo_path = os.path.join(backend.base_path, 'assets', 'eggsmaker.png')
+            logo_path = os.path.join(backend.base_path, 'assets', 'assets', 'eggsmaker2.png')
             if not os.path.exists(logo_path):
-                 logo_path = os.path.join(backend.base_path, 'eggsmaker.png')
+                logo_path = os.path.join(backend.base_path, 'assets', 'eggsmaker2.png')
+            if not os.path.exists(logo_path):
+                logo_path = os.path.join(backend.base_path, 'eggsmaker2.png')
             
             if os.path.exists(logo_path):
                 ui.image(logo_path).props('fit=contain').style('width:32px;height:32px;border-radius:6px;')
             ui.label(f"{__app__} - Versión {__version__}").classes('text-bold')
             
         with ui.row().classes('items-center absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2'):
-             ui.label('Eggsmaker - Web').classes('egg-header-title ml-2').style('font-weight: bold !important; color: #FF5722 !important')
+             ui.label('Eggsmaker 2').classes('egg-header-title ml-2').style('font-weight: bold !important; color: #FF5722 !important')
              
         with ui.column().classes('items-end'):
             versions_eggs = ui.label("Penguins' Eggs: N/A")
-            versions_calamares = ui.label("Calamares: N/A")
 
     # Terminal area
     with ui.row().classes('w-full q-pa-none q-ma-none q-mt-none main-top-row'):
         console = ui.log().classes('w-full h-[300px] egg-terminal p-2 overflow-y-auto')
 
-    # Main controls
-    with ui.row().classes('w-full items-stretch q-gutter-sm q-pa-none q-ma-none q-mt-none'):
-        # Fase 1
-        with ui.card().classes('min-w-[240px] egg-panel flex flex-col q-pa-xs'):
-            ui.label('Fase 1').classes('egg-title')
-            prep_manual = ui.switch('Inicio (Manual)', value=True).props('dense')
-            calamares_update = ui.switch('Actualizar Eggs y Calamares', value=False).props('dense')
-            btn_phase1 = ui.button('Fase 1', on_click=do_preparation).style('background-color: #091f9e !important; font-weight: bold !important').classes('mt-auto w-full')
-            
-        # Fase 2
-        with ui.card().classes('min-w-[240px] egg-panel flex flex-col q-pa-xs'):
-            ui.label('Fase 2').classes('egg-title')
-            replica_switch = ui.switch('Clonar Escritorio', value=False).props('dense')
-            edit_config_switch = ui.switch('Personalizar ISO', value=False).props('dense')
-            fase2_btn = ui.button('Fase 2', on_click=do_phase2).style('background-color: #091f9e !important; font-weight: bold !important').classes('mt-auto w-full')
-            replica_switch.disable(); edit_config_switch.disable(); fase2_btn.disable()
-                    # Fase 3
-        with ui.card().classes('min-w-[240px] egg-panel flex flex-col q-pa-xs'):
-            ui.label('Fase 3').classes('egg-title')
-            iso_include_data = ui.switch('Incluir datos', value=False).props('dense')
-            iso_max_compression = ui.switch('Máxima compresión', value=False).props('dense')
-            btn_phase3 = ui.button('Fase 3', on_click=do_generate_iso).style('background-color: #091f9e !important; font-weight: bold !important').classes('mt-auto w-full')
-            
-        # Copiar ISO
-        with ui.card().classes('min-w-[240px] egg-panel flex flex-col q-pa-xs'):
-            ui.label('Copiar ISO').classes('egg-title')
-            copy_speed_switch = ui.switch('Rápida', value=False).props('dense')
-            with ui.row().classes('w-full items-center'):
-                dest_dir_input = ui.input('', value=os.path.expanduser('~'), placeholder='Destino').props('dense').classes('flex-grow')
-                ui.button(icon='folder', on_click=lambda: open_dir_picker(dest_dir_input)).props('flat dense').classes('ml-1')
-            btn_copy_iso = ui.button('Copiar ISO', on_click=lambda: asyncio.create_task(do_copy_iso())).style('background-color: #091f9e !important; font-weight: bold !important').classes('mt-auto w-full')
-            
-        # AUTO
-        with ui.card().classes('min-w-[240px] egg-panel flex flex-col q-pa-xs'):
-            ui.label('AUTO').classes('egg-title')
-            btn_auto = ui.button('AUTO', on_click=do_auto).style('background-color: #091f9e !important; font-weight: bold !important').classes('mt-auto w-full')
-            
-        # Sesión
-        with ui.card().classes('min-w-[240px] egg-panel flex flex-col q-pa-xs'):
-            ui.label('Sesión').classes('egg-title')
-            btn_clean = ui.button('Limpiar sesión', on_click=do_clean_session).style('background-color: #091f9e !important; font-weight: bold !important').classes('mt-auto w-full')
+    with ui.card().classes('w-full egg-panel q-mt-sm'):
+        with ui.row().classes('w-full items-center justify-between'):
+            ui.label('Generador de ISO').classes('egg-title')
+            ui.button('Crear ISO', icon='disc_full', on_click=run_iso_workflow).classes('egg-button')
 
-        # Logic for switches
-        def toggle_prep():
-            if prep_manual.value:
-                prep_manual.text = 'Inicio (Manual)'
-                btn_auto.disable()
-                btn_phase1.enable()
-                btn_phase1.text = 'Fase 1'
-            else:
-                prep_manual.text = 'Inicio (AUTO)'
-                btn_auto.enable()
-                btn_phase1.disable()
-                
-        def toggle_calamares():
-            if calamares_update.value:
-                prep_manual.value = False
-                btn_phase1.text = 'fresh-eggs/calamares'
-                btn_phase1.enable()
-            else:
-                toggle_prep()
+    async def start_live_installer() -> None:
+        await run_live_installer(installer_choice.value)
 
-        prep_manual.on_value_change(toggle_prep)
-        calamares_update.on_value_change(toggle_calamares)
-        
-        # Initial state
-        toggle_prep()
+    async def install_selected_packages() -> None:
+        await manage_packages(remove=False)
+
+    async def uninstall_selected_packages() -> None:
+        await manage_packages(remove=True)
+
+    with ui.row().classes('w-full items-stretch q-gutter-sm q-pa-none q-ma-none'):
+        with ui.card().classes('min-w-[300px] grow egg-panel'):
+            ui.label('Instalación Live').classes('egg-title')
+            ui.label('Ejecuta Calamares en modo gráfico o abre Krill en una terminal interactiva.').classes('text-gray-300')
+            installer_choice = ui.radio(['Calamares', 'Krill'], value='Calamares').props('inline color=light-blue')
+            ui.button('Iniciar instalador', on_click=start_live_installer).classes('egg-button mt-2')
+
+        with ui.card().classes('min-w-[300px] grow egg-panel'):
+            ui.label('Configuración de Penguins’ Eggs').classes('egg-title')
+            ui.label('Edita /etc/penguins-eggs.d/custom.yaml sin abrir el asistente de texto.').classes('text-gray-300')
+            ui.button('Configurar Eggs', on_click=edit_config_dialog).classes('egg-button mt-2')
 
     # Status Bar - Simplified for visibility
     with ui.row().classes('w-full'):
@@ -1366,6 +1090,24 @@ def main_page():
                     copy_time_label = ui.label("Copia: 00:00:00").style('color: cyan; font-size: 14px; font-weight: bold;')
                     iso_time_label = ui.label("Generación: 00:00:00").style('color: red; font-size: 14px; font-weight: bold;')
                     Total_time_label = ui.label("Total: 00:00:00").style('color: lime; font-size: 14px; font-weight: bold;')
+
+    with ui.card().classes('w-full egg-panel q-mt-sm'):
+        ui.label('Gestor de paquetes').classes('egg-title')
+        ui.label('Recopila listas de paquetes del sistema y selecciona qué instalar o desinstalar.').classes('text-gray-300')
+        with ui.row().classes('w-full items-end'):
+            package_group_select = ui.select(
+                list(PACKAGE_GROUPS), value='Nativos', label='Origen'
+            ).props('dark').classes('min-w-[180px]')
+            package_group_select.on_value_change(lambda _: refresh_package_options())
+            package_select = ui.select(
+                [], multiple=True, with_input=True, label='Paquetes'
+            ).props('use-chips dark').classes('grow')
+            ui.button('Recopilar', icon='refresh', on_click=collect_package_lists).classes('egg-button')
+        with ui.row().classes('items-center'):
+            ui.button('Instalar selección', icon='download', on_click=install_selected_packages).classes('egg-button')
+            ui.button('Desinstalar selección', icon='delete', on_click=uninstall_selected_packages).props('color=negative')
+            ui.button('Vaciar listas', icon='delete_sweep', on_click=clear_package_lists).props('flat')
+            package_status = ui.label('Aún no hay listas. Use “Recopilar” para generarlas.').classes('text-gray-300')
                 
     # Network info footer
     def show_about_dialog():
@@ -1395,27 +1137,70 @@ def main_page():
             ui.button(icon='info', on_click=show_about_dialog).props('flat round dense color=white').tooltip('Acerca de')
             
             # Center: Network info
-            local_ip = backend.get_local_ip()
-            ui.label(f"Acceso en red: http://{local_ip}:{port}").classes('absolute-center').style('color: #33b5e5 !important; font-weight: bold;')
+            access_host = backend.get_local_ip() if bind_host in ('0.0.0.0', '::') else bind_host
+            ui.label(f"Acceso local: http://{access_host}:{port}").classes('absolute-center').style('color: #33b5e5 !important; font-weight: bold;')
 
     # Sudo Dialog (Created upfront)
     sudo_dialog = ui.dialog()
     with sudo_dialog, ui.card().classes('egg-panel'):
         ui.label('Autenticación requerida (sudo)').classes('text-white font-bold')
+        if not backend.sudo_available():
+            ui.label('No se detectó sudo en el sistema; instálelo para ejecutar operaciones administrativas.').classes('text-orange-400')
         pwd = ui.input('Contraseña de sudo', password=True, password_toggle_button=True).props('dark input-class="text-white"')
+
+        async def authenticate() -> None:
+            if not backend.sudo_available():
+                ui.notify('No se encontró sudo. Instálelo antes de usar Eggsmaker 2.', type='negative')
+                return
+            password = pwd.value or ''
+            if not await backend.validate_sudo_password(password):
+                backend.sudo_password = None
+                pwd.value = ''
+                ui.notify('Contraseña incorrecta o sudo no disponible. Verifique permisos del usuario.', type='negative')
+                return
+            backend.sudo_password = password
+            sudo_dialog.close()
+            append_log('Autenticación sudo validada.')
+
         with ui.row():
-            ui.button('Aceptar', on_click=lambda: (setattr(backend, 'sudo_password', pwd.value), sudo_dialog.close())).classes('egg-button')
+            ui.button('Aceptar', on_click=authenticate).classes('egg-button')
             ui.button('Cancelar', on_click=sudo_dialog.close).classes('bg-red-600 hover:bg-red-700')
 
+        client_id = ui.context.client.id
+        ui_states[client_id] = {
+            'console': console,
+            'progress': progress,
+            'phase_status': phase_status,
+            'iso_size_label': iso_size_label,
+            'copy_percent': copy_percent,
+            'copy_counter_label': copy_counter_label,
+            'copy_time_label': copy_time_label,
+            'iso_time_label': iso_time_label,
+            'total_time_label': Total_time_label,
+            'versions_eggs': versions_eggs,
+            'package_group_select': package_group_select,
+            'package_select': package_select,
+            'package_status': package_status,
+            'copying': False,
+            'iso_generating': False,
+            'copy_count': 0,
+            'copy_elapsed': 0.0,
+            'iso_elapsed': 0.0,
+            'copy_started_at': None,
+            'iso_started_at': None,
+        }
+        refresh_package_options(ui_states[client_id])
+
     ui.timer(1.0, update_timers)
-    ui.timer(0.2, lambda: asyncio.create_task(update_versions()), once=True)
+    ui.timer(0.2, update_eggs_version, once=True)
     ui.timer(0.05, sudo_dialog.open, once=True)
 
 def main():
     """Entry point for the application"""
-    global port
+    global port, bind_host
     port = int(os.getenv('PORT', '8080'))
-    ui.run(title=f"{__app__}", port=port, host='0.0.0.0', reload=False)
+    bind_host = os.getenv('EGGSMAKER_HOST', '127.0.0.1')
+    ui.run(title=f"{__app__}", port=port, host=bind_host, reload=False)
 
 if __name__ == "__main__":
     main()

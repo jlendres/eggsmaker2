@@ -11,13 +11,12 @@ Para instalar este projeto em outros computadores, você deve copiar a pasta com
 *   **`backend.py`**: Lógica do sistema.
 *   **`version.py`**: Versão da aplicação.
 *   **`assets/`**: Pasta com imagens e recursos (logo, etc.).
-*   **`bin/`**: Scripts executáveis auxiliares.
 
 ### Instalação
 *   **`install.sh`**: Script de instalação automatizada.
 *   **`requirements.txt`**: Dependências do Python.
 *   **`setup.py`** e **`pyproject.toml`**: Configuração do pacote.
-*   **`eggsmaker-web.desktop`**: Atalho para o menu de aplicativos.
+*   **`eggsmaker2.desktop`**: Atalho para o menu de aplicativos.
 
 ---
 
@@ -35,8 +34,8 @@ Ideal para um único usuário. Não afeta o sistema operacional globalmente.
     ```
 
 **Localização dos arquivos:**
-*   O programa será instalado em: `~/.local/share/eggsmaker-web/`
-*   O executável estará em: `~/.local/bin/eggsmaker-web`
+*   O programa será instalado em: `~/.local/share/eggsmaker2/`
+*   O executável estará em: `~/.local/bin/eggsmaker2`
 
 ### Opção B: Instalação no Sistema
 Torna o programa disponível para todos os usuários do computador. Requer permissões de administrador.
@@ -48,17 +47,17 @@ Torna o programa disponível para todos os usuários do computador. Requer permi
     ```
 
 **Localização dos arquivos:**
-*   O programa será instalado em: `/opt/eggsmaker-web/`
-*   O executável estará em: `/usr/local/bin/eggsmaker-web`
+*   O programa será instalado em: `/opt/eggsmaker2/`
+*   O executável estará em: `/usr/local/bin/eggsmaker2`
 
 ---
 
 ## 3. Execução
 
-Uma vez instalado, você pode procurar por **"Eggsmaker Web"** no menu de aplicativos do seu sistema ou executá-lo a partir do terminal com o comando:
+Uma vez instalado, você pode procurar por **"Eggsmaker 2"** no menu de aplicativos do seu sistema ou executá-lo a partir do terminal com o comando:
 
 ```bash
-eggsmaker-web
+eggsmaker2
 ```
 
 ---

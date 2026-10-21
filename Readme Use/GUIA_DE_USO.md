@@ -1,4 +1,4 @@
-# 📘 Guía de Uso - Eggsmaker WEB
+# 📘 Guía de Uso - Eggsmaker 2
 
 ## 📋 Índice
 
@@ -7,33 +7,42 @@
 3. [Primer Inicio](#primer-inicio)
 4. [Interfaz Principal](#interfaz-principal)
 5. [Flujo de Trabajo](#flujo-de-trabajo)
-6. [Guía Paso a Paso](#guía-paso-a-paso)
-7. [Modo AUTO](#modo-auto)
-8. [Opciones Avanzadas](#opciones-avanzadas)
-9. [Resolución de Problemas](#resolución-de-problemas)
-10. [Preguntas Frecuentes](#preguntas-frecuentes)
+6. [Opciones Avanzadas](#opciones-avanzadas)
+7. [Resolución de Problemas](#resolución-de-problemas)
+8. [Preguntas Frecuentes](#preguntas-frecuentes)
 
 ---
 
 ## 🎯 Introducción
 
-**Eggsmaker WEB** es una interfaz gráfica web moderna para **Penguins' Eggs**, la herramienta de creación de ISOs remasterizables de sistemas Linux.
+**Eggsmaker 2** es una aplicación gráfica para **Penguins' Eggs** que permite crear ISOs remasterizables y administrar instalaciones Live y paquetes del sistema.
 
-### ¿Qué hace Eggsmaker WEB?
+### ¿Qué hace Eggsmaker 2?
 
 - ✅ Crea ISOs de tu sistema Linux actual
 - ✅ Clona tu escritorio y configuraciones
 - ✅ Personaliza la configuración de la ISO
 - ✅ Copia ISOs generadas a ubicaciones personalizadas
-- ✅ Gestiona y actualiza Penguins' Eggs y Calamares
-- ✅ Limpia sesiones de trabajo
+- ✅ Ejecuta la secuencia de creación ISO de Eggsmaker Plus
+- ✅ Inicia instalaciones Live con Calamares o Krill
+- ✅ Recopila listas de paquetes y permite instalar o desinstalar paquetes nativos, AUR, Chaotic-AUR y Flatpak
+- ✅ Edita la configuración de Eggs desde un formulario gráfico
+- ✅ Permite limpiar temporales al finalizar
 
 ### Requisitos Previos
 
 - **Penguins' Eggs** instalado en el sistema
 - Permisos de **sudo** (se solicitará la contraseña al inicio)
 - Python 3.8 o superior
-- Conexión a internet (para actualizaciones)
+- Conexión a internet (para instalar paquetes o descargar componentes)
+
+### Instalación Live y paquetes
+
+La sección **Instalación Live** permite iniciar Calamares o Krill. Calamares se abre como aplicación gráfica; Krill requiere una terminal gráfica compatible y solicita allí la contraseña de `sudo` para su interfaz de texto.
+
+En **Gestor de paquetes**, pulsa **Recopilar** para crear listas en `~/$(hostname)-pak/`, selecciona un origen y los paquetes, y usa **Instalar selección** o **Desinstalar selección**. Los orígenes disponibles dependen de la distribución y de las herramientas instaladas. En Arch se admiten paquetes nativos, AUR mediante `yay`, Chaotic-AUR y Flatpak; en Debian/Ubuntu se gestionan paquetes manuales de APT y Flatpak.
+
+El botón **Configurar Eggs** abre el editor gráfico de `eggs.yaml`; no ejecuta el asistente interactivo `eggs config` en modo texto.
 
 ---
 
@@ -43,31 +52,31 @@
 
 #### Instalación Local (Usuario)
 ```bash
-cd /ruta/a/eggsmaker-nicegui
+cd /ruta/a/eggsmaker2
 ./install.sh
 ```
 
-Esto instalará Eggsmaker WEB en `~/.local/share/eggsmaker-web`
+Esto instalará Eggsmaker 2 en `~/.local/share/eggsmaker2`
 
 #### Instalación Global (Sistema)
 ```bash
-cd /ruta/a/eggsmaker-nicegui
+cd /ruta/a/eggsmaker2
 sudo ./install.sh --system
 ```
 
-Esto instalará Eggsmaker WEB en `/opt/eggsmaker-web`
+Esto instalará Eggsmaker 2 en `/opt/eggsmaker2`
 
 ### Método 2: Instalación con pip
 
 ```bash
-cd /ruta/a/eggsmaker-nicegui
+cd /ruta/a/eggsmaker2
 pip install -e .
 ```
 
 ### Método 3: Ejecución Directa (Sin Instalación)
 
 ```bash
-cd /ruta/a/eggsmaker-nicegui
+cd /ruta/a/eggsmaker2
 python3 main.py
 ```
 
@@ -79,10 +88,10 @@ python3 main.py
 
 Después de la instalación:
 ```bash
-eggsmaker-web
+eggsmaker2
 ```
 
-O desde el menú de aplicaciones: buscar **"Eggsmaker WEB"**
+O desde el menú de aplicaciones: buscar **"Eggsmaker 2"**
 
 ### 2. Autenticación Inicial
 
@@ -108,10 +117,7 @@ La aplicación se abrirá automáticamente en tu navegador predeterminado en:
 http://localhost:8080
 ```
 
-Si necesitas acceder desde otro dispositivo en la red:
-```
-http://IP_DE_TU_MAQUINA:8080
-```
+Para acceder desde otro dispositivo, inicia la aplicación con `EGGSMAKER_HOST=0.0.0.0 eggsmaker2` y usa la dirección indicada en el pie de página. Limita el acceso a redes confiables.
 
 ---
 
@@ -121,10 +127,9 @@ http://IP_DE_TU_MAQUINA:8080
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ 🥚 Eggsmaker - Versión 25.12.01      Eggsmaker              │
+│ 🥚 Eggsmaker - Versión 26.10.21      Eggsmaker              │
 │                                                              │
 │                              Penguins' Eggs: X.X.X           │
-│                              Calamares: X.X.X                │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -139,13 +144,10 @@ http://IP_DE_TU_MAQUINA:8080
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### Panel de Control (6 Tarjetas)
+### Acciones principales
 
 ```
-┌──────────┬──────────┬──────────┬──────────┬──────────┬──────────┐
-│ Fase 1   │ Fase 2   │ Fase 3   │ Copiar   │  AUTO    │ Sesión   │
-│          │          │          │   ISO    │          │          │
-└──────────┴──────────┴──────────┴──────────┴──────────┴──────────┘
+Crear ISO  |  Instalación Live  |  Configurar Eggs  |  Gestor de paquetes
 ```
 
 ### Barra de Estado
@@ -163,240 +165,21 @@ http://IP_DE_TU_MAQUINA:8080
 
 ## 🔄 Flujo de Trabajo
 
-### Flujo Completo (3 Fases + Copia)
-
-```mermaid
-graph LR
-    A[Fase 1: Preparación] --> B[Fase 2: Personalización]
-    B --> C[Fase 3: Generar ISO]
-    C --> D[Copiar ISO]
-    D --> E[ISO Lista]
-```
-
-### Flujo Automático
-
-```mermaid
-graph LR
-    A[AUTO] --> B[Fase 1 automática]
-    B --> C[Fase 3 automática]
-    C --> D[Diálogo opciones]
-    D --> E[Copia automática]
-    E --> F[ISO Lista]
-```
-
----
-
-## 📖 Guía Paso a Paso
-
-### 🔹 FASE 1: Preparación
-
-**Objetivo**: Preparar el sistema para la creación de la ISO
-
-#### Opciones:
-
-**🔘 Inicio (Manual)**
-- `Activado`: Ejecuta solo limpieza y preparación básica
-- `Desactivado`: Cambia a modo AUTO (ver sección Modo AUTO)
-
-**🔘 Actualizar Eggs y Calamares**
-- `Activado`: Descarga e instala las últimas versiones de Penguins' Eggs y Calamares desde GitHub
-- `Desactivado`: Usa las versiones instaladas actualmente
-
-> ⚠️ **Nota**: Si activas "Actualizar Eggs y Calamares", el interruptor "Inicio (Manual)" se desactivará automáticamente.
-
-#### Acciones realizadas:
-
-1. `eggs kill -n` - Detiene procesos previos de Eggs
-2. `eggs tools clean -n` - Limpia archivos temporales
-3. `eggs dad -d` - Verifica y crea estructura de directorios
-4. `eggs calamares --install` - Instala Calamares (si está activado)
-
-#### Botón: **[Fase 1]**
-
-Al completar, habilita las opciones de Fase 2.
-
----
-
-### 🔹 FASE 2: Personalización (Opcional)
-
-**Objetivo**: Personalizar el contenido de la ISO
-
-#### Opciones:
-
-**🔘 Clonar Escritorio**
-- Copia tu escritorio actual al perfil de usuario de la ISO
-- Incluye: configuraciones, temas, iconos, fondos de pantalla, etc.
-- Comando ejecutado: `sudo eggs tools skel`
-
-**🔘 Personalizar ISO**
-- Abre un diálogo para editar configuraciones avanzadas de la ISO
-- Permite configurar:
-  - **Contraseña de root**: Contraseña del usuario root en la ISO
-  - **Nombre base del snapshot**: Nombre base para la ISO (ej: "mi-distro")
-  - **Prefijo del snapshot**: Prefijo adicional (ej: "personalizada-")
-  - **Contraseña de usuario**: Contraseña predeterminada para usuarios
-
-> 💡 **Tip**: Estas configuraciones se guardan en `/etc/penguins-eggs.d/eggs.yaml`
-
-#### Botón: **[Fase 2]**
-
-Ejecuta las acciones seleccionadas. Esta fase es opcional.
-
----
-
-### 🔹 FASE 3: Generar ISO
-
-**Objetivo**: Crear el archivo ISO de tu sistema
-
-#### Opciones:
-
-**🔘 Incluir datos**
-- `Activado`: Crea ISO con `/home` completo (modo clone)
-- `Desactivado`: Crea ISO solo del sistema (más ligera)
-- Comando: `sudo eggs produce --clone -n` (activado) o `sudo eggs produce --noicon -n` (desactivado)
-
-**🔘 Máxima compresión**
-- `Activado`: Crea ISO con compresión máxima (más pequeña, más lenta)
-- `Desactivado`: Compresión estándar
-- Comando: `sudo eggs produce --pendrive -n`
-
-> ⚠️ **Advertencia**: La generación de ISO puede tardar varios minutos dependiendo del tamaño del sistema.
-
-#### Botón: **[Fase 3]**
-
-Durante la generación:
-- Barra de progreso en modo "indeterminado" (ondulante)
-- Estado: "Ejecutando: Fase 3 (Generar ISO)"
-- Terminal muestra salida en tiempo real
-
-Al finalizar:
-- Se muestra el tamaño de la ISO generada
-- Ubicación típica: `/home/eggs/*.iso` o `/home/eggs/.mnt/*.iso`
-
----
-
-### 🔹 COPIAR ISO
-
-**Objetivo**: Copiar la ISO generada a una ubicación personalizada
-
-#### Opciones:
-
-**🔘 Rápida**
-- `Activado`: Copia a máxima velocidad
-- `Desactivado`: Copia con pausa (más lenta, menos carga del sistema)
-
-**📁 Directorio Destino**
-- Campo de texto con la ruta destino
-- Click en 🗁 para abrir navegador de directorios
-- Por defecto: directorio home del usuario
-
-#### Selector de Directorio
-
-```
-┌─────────────────────────────────────┐
-│ Seleccionar directorio destino     │
-├─────────────────────────────────────┤
-│ Ruta actual: /home/usuario          │
-│                                     │
-│ 📁 Documentos                       │
-│ 📁 Descargas                        │
-│ 📁 Escritorio                       │
-│ 📁 Imágenes                         │
-│ 📁 usb-drive                        │
-│                                     │
-│         [Cancelar] [Seleccionar]    │
-└─────────────────────────────────────┘
-```
-
-#### Botón: **[Copiar ISO]**
-
-Durante la copia:
-- Barra de progreso **roja** con porcentaje
-- Estado: "Ejecutando: Copiar ISO"
-- Muestra: `XX%` en grande
-- Contador de copias realizadas se incrementa
-
-> 💡 **Tip**: Puedes copiar la misma ISO múltiples veces a diferentes ubicaciones.
-
----
-
-### 🔹 MODO AUTO
-
-**Objetivo**: Ejecutar todo el proceso automáticamente
-
-#### ¿Cómo activar el modo AUTO?
-
-Desactiva el interruptor **"Inicio (Manual)"** en Fase 1:
-- El botón de Fase 1 cambiará a "fresh-eggs/calamares"
-- El botón AUTO se habilitará
-
-#### Flujo del Modo AUTO:
-
-1. **Fase 1**: Ejecuta preparación automáticamente
-2. **Fase 3**: Genera la ISO automáticamente
-3. **Diálogo de opciones de copia**: Se muestra automáticamente
-
-```
-┌─────────────────────────────────────┐
-│ Opciones de Copia                   │
-├─────────────────────────────────────┤
-│ 🔘 Copia Rápida                     │
-│                                     │
-│ Directorio Destino:                 │
-│ /home/usuario [🗁]                  │
-│                                     │
-│         [Cancelar] [Continuar]      │
-└─────────────────────────────────────┘
-```
-
-4. **Copia**: Copia la ISO según las opciones seleccionadas
-
-#### Botón: **[AUTO]**
-
-Inicia todo el proceso con un solo click.
-
-**Indicadores Visuales:**
-- 🔴 **Rojo (Pulsando)**: El proceso AUTO está en ejecución.
-- 🟢 **Verde**: El proceso ha finalizado exitosamente.
-- 🔵 **Azul**: Estado normal / inactivo.
-
-> ⚠️ **Nota**: La Fase 2 (personalización) NO se ejecuta en modo AUTO. Si necesitas personalizar, usa el flujo manual.
-
----
-
-### 🔹 SESIÓN: Limpiar Sesión
-
-**Objetivo**: Eliminar la carpeta de trabajo `/home/eggs`
-
-#### Botón: **[Limpiar sesión]**
-
-Al hacer click, se muestra confirmación:
-
-```
-┌─────────────────────────────────────┐
-│ ¿Eliminar la carpeta /home/eggs     │
-│ por completo?                       │
-│                                     │
-│ Tamaño actual: 3.5 GB              │
-│                                     │
-│      [Confirmar] [Cancelar]        │
-└─────────────────────────────────────┘
-```
-
-Al confirmar:
-- Elimina `/home/eggs` completamente
-- Limpia el terminal de log
-- Libera espacio en disco
-
-> 💡 **Cuándo usar**: Después de copiar la ISO a su ubicación final, o cuando necesites liberar espacio.
-
----
+1. En la pregunta de configuración del escritorio, elige si ejecutar `sudo eggs tools skel`.
+2. Si eliges editar la configuración de Eggs, se abre el formulario gráfico de `eggs.yaml`; no se lanza el asistente de texto `eggs config`.
+3. Elige si quieres crear una ISO normal o un clon del sistema (`--clone`).
+4. Confirma la generación. Eggsmaker ejecuta `sudo eggs kill && eggs tools clean && eggs remaster`, añadiendo `--clone` cuando corresponde.
+5. Selecciona el destino en el cuadro de diálogo. El selector de carpetas de la aplicación se reutiliza aquí y `rsync --info=progress2` muestra la copia en el terminal y la barra de progreso.
+6. Puedes repetir la copia en otros destinos o elegir omitirla.
+7. Al final puedes ejecutar `eggs kill` para quitar los temporales de construcción.
+
+El orden es secuencial y cada decisión se presenta gráficamente antes de ejecutar la siguiente acción.
 
 ## ⚡ Opciones Avanzadas
 
 ### 🔧 Editar Configuración ISO
 
-Accesible desde Fase 2 → "Personalizar ISO"
+Disponible mediante **Configurar Eggs**, que abre un formulario gráfico con los campos frecuentes y el YAML completo.
 
 #### Campos Editables:
 
@@ -421,7 +204,7 @@ Accesible desde Fase 2 → "Personalizar ISO"
 
 #### Barra de Progreso
 
-- **Azul claro**: Operaciones normales (Fase 1, Fase 3)
+- **Azul claro**: Operación activa
 - **Ondulante**: Generación de ISO (duración indeterminada)
 - **Roja**: Copia de ISO (muestra porcentaje exacto)
 
@@ -448,28 +231,12 @@ Accesible desde Fase 2 → "Personalizar ISO"
 **Causa**: La ISO no se generó correctamente o no está en la ubicación esperada.
 
 **Soluciones**:
-1. Verifica que la Fase 3 completó exitosamente
+1. Verifica que la generación terminó correctamente
 2. Revisa el terminal de log para errores durante la generación
 3. Verifica manualmente si existe el archivo:
    ```bash
    ls -lh /home/eggs/*.iso
    ls -lh /home/eggs/.mnt/*.iso
-   ```
-
----
-
-### ❌ Error durante actualización de Eggs/Calamares
-
-**Causa**: Problemas de red o permisos.
-
-**Soluciones**:
-1. Verifica tu conexión a internet
-2. Intenta manualmente:
-   ```bash
-   cd ~
-   git clone https://github.com/pieroproietti/fresh-eggs
-   cd fresh-eggs
-   sudo ./fresh-eggs.sh
    ```
 
 ---
@@ -484,7 +251,7 @@ Accesible desde Fase 2 → "Personalizar ISO"
    ```
 3. Usa un puerto diferente:
    ```bash
-   PORT=8081 eggsmaker-web
+   PORT=8081 eggsmaker2
    ```
 
 ---
@@ -516,16 +283,14 @@ Depende del modo:
 
 ---
 
-### ¿Puedo usar Eggsmaker WEB desde otro dispositivo en la red?
+### ¿Puedo usar Eggsmaker 2 desde otro dispositivo en la red?
 
-Sí. La aplicación muestra la dirección de red en el pie de página:
+Por seguridad, la aplicación escucha solo en `127.0.0.1` de forma predeterminada. Para habilitar la red local, inicia con:
 ```
-Acceso en red: http://192.168.1.100:8080
+EGGSMAKER_HOST=0.0.0.0 eggsmaker2
 ```
 
-Usa esa dirección desde cualquier navegador en la misma red local.
-
-> ⚠️ **Seguridad**: Asegúrate de estar en una red confiable.
+El pie de página mostrará la dirección de acceso. Usa esta opción solo en una red confiable: la interfaz puede ejecutar acciones administrativas después de autenticar `sudo`.
 
 ---
 
@@ -543,17 +308,6 @@ Actualmente no hay botón de cancelación. Opciones:
 1. Esperar a que termine
 2. Cerrar la aplicación completamente (Ctrl+C en la terminal)
 3. Usar "Limpiar sesión" después para limpiar archivos parciales
-
----
-
-### ¿Es seguro usar modo AUTO?
-
-Sí, pero ten en cuenta:
-- ✅ No ejecuta la Fase 2 (no clona escritorio ni personaliza)
-- ✅ Usa configuraciones predeterminadas
-- ❌ No permite personalización durante el proceso
-
-**Recomendado para**: Creación rápida de ISOs estándar sin personalización.
 
 ---
 
@@ -575,10 +329,10 @@ Sí, pero:
 
 ---
 
-### ¿Cómo actualizo Eggsmaker WEB?
+### ¿Cómo actualizo Eggsmaker 2?
 
 ```bash
-cd /ruta/a/eggsmaker-nicegui
+cd /ruta/a/eggsmaker2
 git pull
 ./install.sh  # Reinstalar
 ```
@@ -600,46 +354,24 @@ pip install -e . --upgrade
 
 ### Soporte
 
-Para problemas específicos de Eggsmaker WEB, consulta:
+Para problemas específicos de Eggsmaker 2, consulta:
 - El terminal de log en la aplicación
 - Los archivos de log del sistema
 - La comunidad de Penguins' Eggs
 
 ---
 
-## 📝 Resumen de Comandos Rápidos
+## 📝 Resumen
 
-### Flujo Manual Completo
-```
-1. Fase 1 (Preparación)
-2. Fase 2 (Personalizar - opcional)
-3. Fase 3 (Generar ISO)
-4. Copiar ISO
-5. Limpiar sesión
-```
-
-### Flujo AUTO
-```
-1. Desactivar "Inicio (Manual)"
-2. Click en "AUTO"
-3. Esperar generación
-4. Configurar opciones de copia
-5. Click en "Continuar"
-6. Limpiar sesión
-```
-
-### Actualización Rápida de Eggs
-```
-1. Activar "Actualizar Eggs y Calamares"
-2. Click en "Fase 1"
-3. Esperar actualización
-```
-
----
+1. Pulsa **Crear ISO**.
+2. Responde si quieres copiar la configuración del escritorio, editar `eggs.yaml` y crear un clon.
+3. Confirma la generación y sigue su progreso en el terminal y la barra.
+4. Selecciona una carpeta con el selector integrado, repite la copia o sáltala.
+5. Elige si ejecutar `eggs kill` para quitar temporales.
 
 ## 🎉 ¡Disfruta creando tus ISOs!
 
-Esta guía cubre todas las funcionalidades principales de Eggsmaker WEB. Para usos avanzados, consulta la documentación de Penguins' Eggs.
+Esta guía cubre todas las funcionalidades principales de Eggsmaker 2. Para usos avanzados, consulta la documentación de Penguins' Eggs.
 
 **Versión de la guía**: 1.0
-**Compatible con**: Eggsmaker WEB v25.12.01
+**Compatible con**: Eggsmaker 2 v26.10.21

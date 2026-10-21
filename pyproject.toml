@@ -3,10 +3,10 @@ requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "eggsmaker-web"
+name = "eggsmaker2"
 dynamic = ["version"]
 description = "Graphical interface for Penguins' Eggs ISO creator"
-readme = "README.md"
+readme = "Readme Use/GUIA_DE_USO.md"
 requires-python = ">=3.8"
 license = {text = "GPL-3.0-or-later"}
 authors = [
@@ -32,7 +32,7 @@ dependencies = [
 ]
 
 [project.scripts]
-eggsmaker-web-py = "main:main"
+eggsmaker2 = "main:main"
 
 [project.urls]
 Homepage = "https://github.com/pieroproietti/penguins-eggs"
@@ -40,7 +40,6 @@ Documentation = "https://github.com/pieroproietti/penguins-eggs"
 Repository = "https://github.com/pieroproietti/penguins-eggs"
 
 [tool.setuptools]
-script-files = ["bin/eggsmaker-web"]
 
 [tool.setuptools.dynamic]
 version = {attr = "version.__version__"}

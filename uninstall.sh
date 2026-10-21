@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Eggsmaker WEB Uninstaller
+# Eggsmaker 2 Uninstaller
 #
 
 set -e
@@ -23,7 +23,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --help|-h)
-            echo "Eggsmaker WEB Uninstaller"
+            echo "Eggsmaker 2 Uninstaller"
             echo ""
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -42,7 +42,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo -e "${BLUE}╔════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║   Eggsmaker WEB Uninstaller        ║${NC}"
+echo -e "${BLUE}║   Eggsmaker 2 Uninstaller          ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════╝${NC}"
 echo ""
 
@@ -55,15 +55,15 @@ fi
 
 # Determine paths
 if [ "$SYSTEM_UNINSTALL" = true ]; then
-    INSTALL_DIR="/opt/eggsmaker-web"
-    BIN_FILE="/usr/local/bin/eggsmaker-web"
-    DESKTOP_FILE="/usr/share/applications/eggsmaker-web.desktop"
-    ICON_FILE="/usr/share/pixmaps/eggsmaker.png"
+    INSTALL_DIR="/opt/eggsmaker2"
+    BIN_FILE="/usr/local/bin/eggsmaker2"
+    DESKTOP_FILE="/usr/share/applications/eggsmaker2.desktop"
+    ICON_FILE="/usr/share/pixmaps/eggsmaker2.png"
 else
-    INSTALL_DIR="$HOME/.local/share/eggsmaker-web"
-    BIN_FILE="$HOME/.local/bin/eggsmaker-web"
-    DESKTOP_FILE="$HOME/.local/share/applications/eggsmaker-web.desktop"
-    ICON_FILE="$HOME/.local/share/icons/eggsmaker.png"
+    INSTALL_DIR="$HOME/.local/share/eggsmaker2"
+    BIN_FILE="$HOME/.local/bin/eggsmaker2"
+    DESKTOP_FILE="$HOME/.local/share/applications/eggsmaker2.desktop"
+    ICON_FILE="$HOME/.local/share/icons/eggsmaker2.png"
 fi
 
 echo -e "${YELLOW}Removing files...${NC}"

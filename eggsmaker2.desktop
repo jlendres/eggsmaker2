@@ -1,0 +1,11 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Eggsmaker 2
+Comment=Graphical system and ISO management for Penguins' Eggs
+Exec=eggsmaker2
+Icon=eggsmaker2
+Terminal=false
+Categories=System;Utility;Settings;
+Keywords=iso;eggs;linux;remaster;packages;installer;
