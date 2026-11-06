@@ -1,0 +1,624 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"image/color"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/widget"
+)
+
+type LogView struct{ entry *widget.Entry }
+
+func (l *LogView) Append(v string) {
+	if l == nil || l.entry == nil {
+		return
+	}
+	fyne.Do(func() {
+		l.entry.SetText(l.entry.Text + v)
+		l.entry.Refresh()
+	})
+}
+
+func (s *AppState) buildGUI(myApp fyne.App) {
+	s.Window.Resize(fyne.NewSize(900, 680))
+	s.Window.SetMaster()
+	header := widget.NewLabelWithStyle("Eggsmaker Go  •  v"+AppVersion, fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	status := widget.NewLabel(fmt.Sprintf("Penguins Eggs: %s   |   Distribución: %s", s.EggsVersion, s.DistroName))
+	if _, err := exec.LookPath("eggs"); err != nil {
+		status.SetText(status.Text + "   |   ADVERTENCIA: eggs no está instalado")
+	}
+	console := widget.NewMultiLineEntry()
+	console.SetMinRowsVisible(12)
+	console.Wrapping = fyne.TextWrapOff
+	console.SetText("Eggsmaker Go iniciado.\nLos registros de los procesos aparecerán aquí.\n")
+	console.Disable()
+	s.Log = &LogView{entry: console}
+	progress := newColorProgress(color.NRGBA{R: 255, G: 105, B: 0, A: 255})
+	progress.Hide()
+	progressBusy := widget.NewProgressBarInfinite()
+	progressBusy.Hide()
+	progressText := widget.NewLabel("Listo")
+
+	btnISO := widget.NewButton("Generar ISO personalizada", func() { s.startISOWorkflow(progress, progressBusy, progressText) })
+	btnLive := widget.NewButton("Instalación Live (Calamares / Krill)", func() { s.showInstallerDialog() })
+	btnPackages := widget.NewButton("Gestor de paquetes", func() { s.showPackageManager() })
+	btnConfig := widget.NewButton("Editar configuración de Penguins Eggs", func() {
+		go func() {
+			if err := s.runInteractive(shellQuote(s.eggBinary())+" config", "Eggsmaker Go - eggs config"); err != nil {
+				fyne.Do(func() { dialog.ShowError(err, s.Window) })
+			}
+		}()
+	})
+	btnClear := widget.NewButton("Limpiar visor", func() { console.SetText("") })
+	btnExit := widget.NewButton("Salir", func() { s.Window.Close() })
+
+	buttons := container.New(layout.NewGridLayout(2), btnISO, btnLive, btnPackages, btnConfig)
+	logHeader := container.NewBorder(nil, nil, widget.NewLabel("Terminal / salida de procesos"), btnClear)
+	consoleFrame := canvas.NewRectangle(color.Transparent)
+	consoleFrame.StrokeColor = color.NRGBA{R: 190, G: 190, B: 198, A: 255}
+	consoleFrame.StrokeWidth = 1.5
+	consoleView := container.NewStack(consoleFrame, container.NewPadded(container.NewScroll(console)))
+	content := container.NewBorder(
+		container.NewVBox(header, status, widget.NewSeparator(), buttons, widget.NewSeparator(), progressText, progressBusy, progress, logHeader),
+		container.NewHBox(layout.NewSpacer(), btnExit), nil, nil,
+		consoleView,
+	)
+	s.Window.SetContent(content)
+	s.logf("Sistema detectado: %s (%s)\nUsuario: %s\nDirectorio de listas: %s\n", s.Distro, s.DistroName, s.RealUser, s.TargetDir)
+	s.Window.ShowAndRun()
+}
+
+func (s *AppState) eggBinary() string {
+	if s.EggsPath != "" {
+		return s.EggsPath
+	}
+	return "eggs"
+}
+
+func (s *AppState) startISOWorkflow(progress *colorProgress, busy *widget.ProgressBarInfinite, label *widget.Label) {
+	if _, err := exec.LookPath("eggs"); err != nil {
+		dialog.ShowError(fmt.Errorf("Penguins Eggs no está instalado o no está en PATH"), s.Window)
+		return
+	}
+	dialog.ShowConfirm("Configuración de escritorio", "¿Deseás copiar la configuración del escritorio con 'eggs tools skel'?", func(skel bool) {
+		continueClone := func() {
+			dialog.ShowConfirm("Clonación", "¿Deseás crear un clon del sistema (--clone)?", func(clone bool) {
+				dialog.ShowConfirm("Confirmar generación", "Se limpiarán los temporales de Eggs y se iniciará la creación de la ISO. ¿Continuar?", func(ok bool) {
+					if ok {
+						go s.generateISO(clone, progress, busy, label)
+					}
+				}, s.Window)
+			}, s.Window)
+		}
+		askConfig := func() {
+			dialog.ShowConfirm("Configuración de Penguins Eggs", "¿Deseás editar la configuración con 'eggs config'? Los cambios se guardan desde el propio asistente.", func(edit bool) {
+				if !edit {
+					continueClone()
+					return
+				}
+				go func() {
+					err := s.runInteractive(shellQuote(s.eggBinary())+" config", "Eggsmaker Go - eggs config")
+					if err != nil {
+						fyne.Do(func() { dialog.ShowError(err, s.Window) })
+						return
+					}
+					fyne.Do(func() { continueClone() })
+				}()
+			}, s.Window)
+		}
+		if skel {
+			go func() {
+				err := s.runLogged(context.Background(), "Copiar configuración de escritorio", "eggs", "tools", "skel")
+				if err != nil {
+					fyne.Do(func() { dialog.ShowError(err, s.Window) })
+					return
+				}
+				fyne.Do(func() { askConfig() })
+			}()
+		} else {
+			askConfig()
+		}
+	}, s.Window)
+}
+
+func (s *AppState) generateISO(clone bool, progress *colorProgress, busy *widget.ProgressBarInfinite, label *widget.Label) {
+	fyne.Do(func() {
+		busy.Show()
+		busy.Start()
+		label.SetText("Generando ISO: progreso indeterminado; se muestran etapas y salida real.")
+	})
+	args := []string{"remaster"}
+	if clone {
+		args = append(args, "--clone")
+	}
+	eggsBin := s.EggsPath
+	if eggsBin == "" {
+		eggsBin = "eggs"
+	}
+	command := shellQuote(eggsBin) + " kill && " + shellQuote(eggsBin) + " tools clean && " + shellQuote(eggsBin) + " " + strings.Join(args, " ")
+	startedAt := time.Now()
+	ctx := context.Background()
+	err := s.runLogged(ctx, "Preparar y generar ISO", "/bin/bash", "-lc", command)
+	fyne.Do(func() {
+		busy.Stop()
+		busy.Hide()
+		if err != nil {
+			label.SetText("La generación terminó con errores")
+		} else {
+			label.SetText("Generación finalizada")
+		}
+	})
+	if err != nil {
+		fyne.Do(func() { dialog.ShowError(err, s.Window) })
+		return
+	}
+	iso, err := latestISO("/home/eggs")
+	if err == nil {
+		if info, e := os.Stat(iso); e != nil {
+			err = e
+		} else if info.ModTime().Before(startedAt) {
+			err = fmt.Errorf("no se detectó una ISO nueva después de iniciar la generación")
+		}
+	}
+	if err != nil {
+		fyne.Do(func() {
+			dialog.ShowInformation("Generación finalizada", "No se encontró un archivo ISO en /home/eggs. Revisá el visor de salida.", s.Window)
+		})
+		return
+	}
+	fyne.Do(func() {
+		dialog.ShowConfirm("ISO generada", "Archivo encontrado:\n"+iso+"\n\n¿Deseás copiarlo a otra ubicación?", func(copyIt bool) {
+			if copyIt {
+				s.chooseCopyDestination(iso, progress, label)
+			} else {
+				s.askCleanup()
+			}
+		}, s.Window)
+	})
+}
+
+func latestISO(dir string) (string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", err
+	}
+	type item struct {
+		path string
+		mod  time.Time
+	}
+	var isos []item
+	for _, e := range entries {
+		if !e.IsDir() && strings.EqualFold(filepath.Ext(e.Name()), ".iso") {
+			info, err := e.Info()
+			if err == nil {
+				isos = append(isos, item{filepath.Join(dir, e.Name()), info.ModTime()})
+			}
+		}
+	}
+	if len(isos) == 0 {
+		return "", fmt.Errorf("no hay archivos ISO en %s", dir)
+	}
+	sort.Slice(isos, func(i, j int) bool { return isos[i].mod.After(isos[j].mod) })
+	return isos[0].path, nil
+}
+
+func (s *AppState) chooseCopyDestination(source string, progress *colorProgress, label *widget.Label) {
+	fileDialog := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
+		if err != nil {
+			dialog.ShowError(err, s.Window)
+			return
+		}
+		if uri == nil {
+			s.askCleanup()
+			return
+		}
+		dest := filepath.Join(uri.Path(), filepath.Base(source))
+		if filepath.Clean(dest) == filepath.Clean(source) {
+			dialog.ShowInformation("Copiar ISO", "El destino seleccionado es el mismo archivo de origen.", s.Window)
+			return
+		}
+		if _, statErr := os.Stat(dest); statErr == nil {
+			dialog.ShowConfirm("Sobrescribir archivo", "Ya existe "+dest+". ¿Deseás reemplazarlo?", func(ok bool) {
+				if ok {
+					go s.copyWithProgress(source, dest, progress, label)
+				}
+			}, s.Window)
+			return
+		}
+		go s.copyWithProgress(source, dest, progress, label)
+	}, s.Window)
+	fileDialog.Resize(fyne.NewSize(900, 650))
+	fileDialog.Show()
+}
+
+func (s *AppState) copyWithProgress(source, dest string, progress *colorProgress, label *widget.Label) {
+	in, err := os.Open(source)
+	if err != nil {
+		fyne.Do(func() { dialog.ShowError(err, s.Window) })
+		return
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		fyne.Do(func() { dialog.ShowError(err, s.Window) })
+		return
+	}
+	out, err := os.CreateTemp(filepath.Dir(dest), ".eggsmaker-copy-*.part")
+	if err != nil {
+		fyne.Do(func() { dialog.ShowError(err, s.Window) })
+		return
+	}
+	tempPath := out.Name()
+	defer os.Remove(tempPath)
+	fyne.Do(func() { progress.Show(); progress.SetValue(0); label.SetText("Copiando ISO...") })
+	buf := make([]byte, 4*1024*1024)
+	var copied int64
+	last := time.Now()
+	for {
+		n, readErr := in.Read(buf)
+		if n > 0 {
+			written, werr := out.Write(buf[:n])
+			copied += int64(written)
+			if werr != nil {
+				err = werr
+				break
+			}
+			if written != n {
+				err = io.ErrShortWrite
+				break
+			}
+			if info.Size() > 0 && (time.Since(last) > 250*time.Millisecond || copied == info.Size()) {
+				pct := float64(copied) / float64(info.Size())
+				copiedNow, totalNow := copied, info.Size()
+				fyne.Do(func() {
+					progress.SetValue(pct)
+					label.SetText(fmt.Sprintf("Copiando: %.1f%%  •  %s / %s", pct*100, formatBytes(copiedNow), formatBytes(totalNow)))
+				})
+				last = time.Now()
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			err = readErr
+			break
+		}
+	}
+	if err == nil {
+		err = out.Sync()
+	}
+	closeErr := out.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tempPath, dest)
+	}
+	fyne.Do(func() {
+		progress.Hide()
+		if err != nil {
+			label.SetText("Error durante la copia")
+		} else {
+			progress.SetValue(1)
+			label.SetText("Copia completada: " + dest)
+		}
+	})
+	if err != nil {
+		fyne.Do(func() { dialog.ShowError(err, s.Window) })
+		return
+	}
+	fyne.Do(func() {
+		dialog.ShowConfirm("Copia completada", "¿Deseás copiar la ISO a otra ubicación?", func(again bool) {
+			if again {
+				s.chooseCopyDestination(source, progress, label)
+			} else {
+				s.askCleanup()
+			}
+		}, s.Window)
+	})
+}
+
+func formatBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+func (s *AppState) askCleanup() {
+	dialog.ShowConfirm("Limpieza", "¿Deseás eliminar los archivos temporales de construcción con 'eggs kill'?", func(ok bool) {
+		if ok {
+			go func() { _ = s.runLogged(context.Background(), "Limpiar temporales", "eggs", "kill") }()
+		}
+	}, s.Window)
+}
+
+func (s *AppState) showInstallerDialog() {
+	choices := []string{"Calamares (interfaz gráfica)", "Krill (terminal interactiva)"}
+	selectBox := widget.NewSelect(choices, nil)
+	selectBox.SetSelected(choices[0])
+	dialog.ShowCustomConfirm("Instalación Live", "Ejecutar", "Cancelar", container.NewVBox(widget.NewLabel("Seleccioná el instalador:"), selectBox), func(ok bool) {
+		if !ok {
+			return
+		}
+		if selectBox.Selected == choices[0] {
+			go func() { _ = s.runLogged(context.Background(), "Calamares", "eggs", "sysinstall", "calamares") }()
+		} else {
+			if err := s.runInteractive(shellQuote(s.eggBinary())+" sysinstall krill", "Eggsmaker Go - Krill"); err != nil {
+				dialog.ShowError(err, s.Window)
+			}
+		}
+	}, s.Window)
+}
+
+func (s *AppState) showPackageManager() {
+	if s.Distro != DistroArch && s.Distro != DistroDebian {
+		dialog.ShowInformation("Gestor de paquetes", "Distribución no reconocida: sólo se admiten Debian y Arch.", s.Window)
+		return
+	}
+	label := widget.NewLabel("Las listas se guardan en " + s.TargetDir + ". Primero recopilá las listas del sistema.")
+	collect := widget.NewButton("1. Recopilar listas", func() {
+		go func() {
+			if err := s.collectPackageLists(); err != nil {
+				fyne.Do(func() { dialog.ShowError(err, s.Window) })
+				return
+			}
+			fyne.Do(func() { label.SetText("Listas actualizadas en " + s.TargetDir) })
+		}()
+	})
+	install := widget.NewButton("2. Instalar lista nativa", func() { s.chooseInstallList("lista-nativo.txt", "nativa") })
+	aurInstall := widget.NewButton("Instalar lista AUR (Arch)", func() { s.chooseInstallList("lista-aur.txt", "aur") })
+	chaoticInstall := widget.NewButton("Instalar lista Chaotic-AUR", func() { s.chooseInstallList("lista-chaotic-aur.txt", "chaotic") })
+	flatpakInstall := widget.NewButton("Instalar lista Flatpak", func() { s.chooseInstallList("lista-flatpak.txt", "flatpak") })
+	remove := widget.NewButton("3. Desinstalar paquetes", func() { s.chooseRemovalList("lista-nativo.txt", "Paquetes del sistema", false) })
+	aurRemove := widget.NewButton("4. Desinstalar paquetes AUR", func() { s.chooseRemovalList("lista-aur.txt", "Paquetes AUR", false) })
+	chaoticRemove := widget.NewButton("Desinstalar paquetes Chaotic-AUR", func() { s.chooseRemovalList("lista-chaotic-aur.txt", "Paquetes Chaotic-AUR", false) })
+	flatpakRemove := widget.NewButton("5. Desinstalar Flatpaks", func() { s.chooseRemovalList("lista-flatpak.txt", "Aplicaciones Flatpak", true) })
+	clearLists := widget.NewButton("Vaciar listas guardadas", func() {
+		dialog.ShowConfirm("Vaciar listas", "Se eliminarán únicamente los archivos de listas de paquetes de Eggsmaker. ¿Continuar?", func(ok bool) {
+			if !ok {
+				return
+			}
+			names := []string{"lista-nativo.txt", "lista-aur.txt", "lista-chaotic-aur.txt", "lista-flatpak.txt"}
+			for _, name := range names {
+				_ = os.Remove(filepath.Join(s.TargetDir, name))
+			}
+			label.SetText("Listas eliminadas.")
+		}, s.Window)
+	})
+	openDir := widget.NewButton("Abrir carpeta de listas", func() {
+		if _, err := exec.LookPath("xdg-open"); err == nil {
+			_ = exec.Command("xdg-open", s.TargetDir).Start()
+		}
+	})
+	content := container.NewVBox(label, collect, install, aurInstall, chaoticInstall, flatpakInstall, remove, aurRemove, chaoticRemove, flatpakRemove, clearLists, openDir,
+		widget.NewLabel("La instalación/restauración requiere listas compatibles con la misma familia de distribución."))
+	managerDialog := dialog.NewCustom("Gestor de paquetes", "Cerrar", content, s.Window)
+	managerDialog.Resize(fyne.NewSize(760, 700))
+	managerDialog.Show()
+}
+
+func (s *AppState) collectPackageLists() error {
+	if err := os.MkdirAll(s.TargetDir, 0755); err != nil {
+		return err
+	}
+	run := func(name string, args ...string) ([]byte, error) { return exec.Command(name, args...).Output() }
+	var native, aur, chaotic, flatpak []byte
+	var err error
+	if s.Distro == DistroArch {
+		native, err = run("pacman", "-Qqe")
+		if err != nil {
+			return fmt.Errorf("pacman -Qqe: %w", err)
+		}
+		aur, _ = run("pacman", "-Qqem")
+		// Clasificar paquetes explícitos del repositorio Chaotic-AUR.
+		installed := map[string]bool{}
+		for _, p := range strings.Fields(string(native)) {
+			installed[p] = true
+		}
+		chaoticRepo, _ := run("pacman", "-Sl", "chaotic-aur")
+		var chaoticNames []string
+		for _, line := range strings.Split(string(chaoticRepo), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[0] == "chaotic-aur" && installed[fields[1]] {
+				chaoticNames = append(chaoticNames, fields[1])
+			}
+		}
+		chaotic = []byte(strings.Join(chaoticNames, "\n"))
+		if len(chaoticNames) > 0 {
+			chaotic = append(chaotic, '\n')
+		}
+		// Separar AUR y Chaotic-AUR de la lista nativa.
+		aurSet := map[string]bool{}
+		for _, p := range strings.Fields(string(aur)) {
+			aurSet[p] = true
+		}
+		chaoticSet := map[string]bool{}
+		for _, p := range chaoticNames {
+			chaoticSet[p] = true
+		}
+		var filtered []string
+		for _, p := range strings.Fields(string(native)) {
+			if !aurSet[p] && !chaoticSet[p] {
+				filtered = append(filtered, p)
+			}
+		}
+		native = []byte(strings.Join(filtered, "\n"))
+		if len(filtered) > 0 {
+			native = append(native, '\n')
+		}
+	} else {
+		native, err = run("apt-mark", "showmanual")
+		if err != nil {
+			return fmt.Errorf("apt-mark showmanual: %w", err)
+		}
+	}
+	if _, e := exec.LookPath("flatpak"); e == nil {
+		flatpak, _ = run("flatpak", "list", "--app", "--columns=application")
+	}
+	files := map[string][]byte{"lista-nativo.txt": native, "lista-aur.txt": aur, "lista-chaotic-aur.txt": chaotic, "lista-flatpak.txt": flatpak}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(s.TargetDir, name), data, 0644); err != nil {
+			return err
+		}
+	}
+	s.logf("\n[Gestor] Listas recopiladas: nativos=%d, AUR=%d, Chaotic-AUR=%d, Flatpak=%d\n", len(strings.Fields(string(native))), len(strings.Fields(string(aur))), len(strings.Fields(string(chaotic))), len(strings.Fields(string(flatpak))))
+	return nil
+}
+
+func readPackageFile(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var result []string
+	for _, line := range strings.Split(string(data), "\n") {
+		p := strings.TrimSpace(line)
+		if p == "" || seen[p] {
+			continue
+		}
+		if !regexpPackage.MatchString(p) {
+			continue
+		}
+		seen[p] = true
+		result = append(result, p)
+	}
+	return result, nil
+}
+
+var regexpPackage = regexp.MustCompile(`^[A-Za-z0-9@._+:-]+$`)
+
+func (s *AppState) chooseRemovalList(fileName, title string, flatpak bool) {
+	path := filepath.Join(s.TargetDir, fileName)
+	packages, err := readPackageFile(path)
+	if err != nil {
+		dialog.ShowInformation(title, "No existe la lista. Primero utilizá 'Recopilar listas'.", s.Window)
+		return
+	}
+	if len(packages) == 0 {
+		dialog.ShowInformation(title, "La lista está vacía.", s.Window)
+		return
+	}
+	checks := widget.NewCheckGroup(packages, nil)
+	checks.Horizontal = false
+	content := container.NewBorder(widget.NewLabel("Seleccioná únicamente los elementos que querés quitar:"), nil, nil, nil, container.NewScroll(checks))
+	listDialog := dialog.NewCustomConfirm(title, "Desinstalar", "Cancelar", content, func(ok bool) {
+		if !ok || len(checks.Selected) == 0 {
+			return
+		}
+		selected := append([]string(nil), checks.Selected...)
+		dialog.ShowConfirm("Confirmar desinstalación", fmt.Sprintf("Se quitarán %d elementos. ¿Continuar?", len(selected)), func(confirmed bool) {
+			if !confirmed {
+				return
+			}
+			go func() {
+				var err error
+				if flatpak {
+					args := append([]string{"uninstall", "-y"}, selected...)
+					err = s.runUserLogged(context.Background(), "Desinstalar Flatpaks", "flatpak", args...)
+				} else if s.Distro == DistroArch {
+					args := append([]string{"-Rns", "--noconfirm"}, selected...)
+					err = s.runLogged(context.Background(), "Desinstalar paquetes", "pacman", args...)
+				} else {
+					args := append([]string{"purge", "-y"}, selected...)
+					err = s.runLogged(context.Background(), "Desinstalar paquetes", "apt-get", args...)
+				}
+				if err != nil {
+					fyne.Do(func() { dialog.ShowError(err, s.Window) })
+				}
+			}()
+		}, s.Window)
+	}, s.Window)
+	listDialog.Resize(fyne.NewSize(760, 580))
+	listDialog.Show()
+}
+
+func (s *AppState) chooseInstallList(fileName, kind string) {
+	path := filepath.Join(s.TargetDir, fileName)
+	packages, err := readPackageFile(path)
+	if err != nil {
+		dialog.ShowInformation("Instalar paquetes", "No existe "+path+". Primero recopilá las listas.", s.Window)
+		return
+	}
+	if len(packages) == 0 {
+		dialog.ShowInformation("Instalar paquetes", "La lista está vacía.", s.Window)
+		return
+	}
+	checks := widget.NewCheckGroup(packages, nil)
+	checks.Horizontal = false
+	content := container.NewBorder(widget.NewLabel("Seleccioná los paquetes que querés instalar/restaurar:"), nil, nil, nil, container.NewScroll(checks))
+	listDialog := dialog.NewCustomConfirm("Instalar paquetes", "Instalar", "Cancelar", content, func(ok bool) {
+		if !ok || len(checks.Selected) == 0 {
+			return
+		}
+		selected := append([]string(nil), checks.Selected...)
+		dialog.ShowConfirm("Confirmar instalación", fmt.Sprintf("Se instalarán %d paquetes de la lista %s. ¿Continuar?", len(selected), kind), func(confirmed bool) {
+			if !confirmed {
+				return
+			}
+			go func() {
+				var err error
+				switch kind {
+				case "aur":
+					if s.Distro != DistroArch {
+						err = fmt.Errorf("AUR sólo está disponible en Arch")
+					} else if _, e := exec.LookPath("yay"); e != nil {
+						err = fmt.Errorf("no se encontró yay")
+					} else {
+						err = s.runUserLogged(context.Background(), "Instalar paquetes AUR", "yay", append([]string{"-S", "--needed", "--noconfirm"}, selected...)...)
+					}
+				case "chaotic":
+					if s.Distro != DistroArch {
+						err = fmt.Errorf("Chaotic-AUR sólo está disponible en Arch")
+					} else {
+						repoArgs := make([]string, 0, len(selected)+3)
+						repoArgs = append(repoArgs, "-S", "--needed", "--noconfirm")
+						for _, p := range selected {
+							repoArgs = append(repoArgs, "chaotic-aur/"+p)
+						}
+						err = s.runLogged(context.Background(), "Instalar paquetes Chaotic-AUR", "pacman", repoArgs...)
+					}
+				case "flatpak":
+					if _, e := exec.LookPath("flatpak"); e != nil {
+						err = fmt.Errorf("Flatpak no está instalado")
+					} else {
+						err = s.runUserLogged(context.Background(), "Instalar Flatpaks", "flatpak", append([]string{"install", "--user", "--noninteractive", "-y"}, selected...)...)
+					}
+				default:
+					if s.Distro == DistroArch {
+						err = s.runLogged(context.Background(), "Instalar paquetes", "pacman", append([]string{"-S", "--needed", "--noconfirm"}, selected...)...)
+					} else {
+						err = s.runLogged(context.Background(), "Instalar paquetes", "apt-get", append([]string{"install", "-y"}, selected...)...)
+					}
+				}
+				if err != nil {
+					fyne.Do(func() { dialog.ShowError(err, s.Window) })
+				}
+			}()
+		}, s.Window)
+	}, s.Window)
+	listDialog.Resize(fyne.NewSize(760, 580))
+	listDialog.Show()
+}

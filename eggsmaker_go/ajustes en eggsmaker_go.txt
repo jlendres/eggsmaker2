@@ -1,0 +1,30 @@
+ajustes en eggsmaker_go:
+
+Terminal/salida de procesos:
+texto cyan
+agregar marco en gris claro
+
+Generar ISO personalizada:
+color progress-bar mientras se genera la iso : violeta
+color progress-bar mientras se genera la copia : naranja intenso
+la ventana del navegador de archivos cuando se elige el destiono
+debe ser mas grande para poder visualizar claramente las carpetas.
+
+
+Gestor de paquetes:
+las ventanas donde se ven las listas deben se mas grandes para que la seleccion sea mas clara (al menos se podrian visualizar 10 items)
+
+general:
+incorporar eggsmaker.desktop al menu del sistema.
+
+verificar que install.sh y unistall.sh se ajecuten correctamente
+tanto en archlinux como en debian.
+
+armar un compilar.sh con los comandos correspondiente para compilar- para facilitar el mantenimiento.
+
+ para arch
+sudo pacman -S --needed base-devel pkgconf mesa libglvnd \
+libx11 libxcursor libxrandr libxinerama libxi libxkbcommon
+
+
+

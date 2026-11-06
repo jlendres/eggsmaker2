@@ -1,0 +1,7 @@
+eggsmaker
+*.log
+*.iso
+*.tmp
+
+build/
+dist/
