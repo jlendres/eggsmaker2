@@ -1,5 +1,0 @@
-version = "26.10.21"
-__version__ =  "26.10.21"
-__app__ = "Eggsmaker 2"
-__author__ = "Jorge Luis Endres"
-__license__ = "GPL-3.0"

@@ -15,7 +15,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 )
 
-const AppVersion = "0.1.1"
+const AppVersion = "26.11.1"
 
 type DistroFamily string
 

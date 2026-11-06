@@ -26,5 +26,17 @@ armar un compilar.sh con los comandos correspondiente para compilar- para facili
 sudo pacman -S --needed base-devel pkgconf mesa libglvnd \
 libx11 libxcursor libxrandr libxinerama libxi libxkbcommon
 
+para debian
+sudo apt update
+sudo apt install build-essential pkg-config xorgproto libgl-dev libglx-dev libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxxf86vm-dev
+
+soplos
+sudo apt update
+
+sudo apt install build-essential pkg-config xorgproto libglx-dev libgl-dev libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxxf86vm-dev
+ls -l /usr/include/X11/X.h
+ls -l /usr/include/GL/glx.h
+
+
 
 
