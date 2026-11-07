@@ -3,6 +3,7 @@ package main
 import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"image/color"
 )
@@ -16,9 +17,24 @@ type colorProgress struct {
 }
 
 func newColorProgress(fill color.Color) *colorProgress {
-	p := &colorProgress{fillColor: fill, trackColor: color.NRGBA{R: 55, G: 55, B: 62, A: 255}}
+	p := &colorProgress{fillColor: fill}
 	p.ExtendBaseWidget(p)
 	return p
+}
+
+// fill y track usan el color fijo si se indicó; si no, siguen el tema activo.
+func (p *colorProgress) fill() color.Color {
+	if p.fillColor != nil {
+		return p.fillColor
+	}
+	return themeColor(theme.ColorNamePrimary)
+}
+
+func (p *colorProgress) track() color.Color {
+	if p.trackColor != nil {
+		return p.trackColor
+	}
+	return themeColor(colorNameButtonBackground)
 }
 
 func (p *colorProgress) SetValue(value float64) {
@@ -33,10 +49,11 @@ func (p *colorProgress) SetValue(value float64) {
 }
 
 func (p *colorProgress) CreateRenderer() fyne.WidgetRenderer {
+	track, fill := p.track(), p.fill()
 	return &colorProgressRenderer{
 		progress:  p,
-		trackLeft: canvas.NewCircle(p.trackColor), trackMiddle: canvas.NewRectangle(p.trackColor), trackRight: canvas.NewCircle(p.trackColor),
-		fillLeft: canvas.NewCircle(p.fillColor), fillRight: canvas.NewCircle(p.fillColor), fillMiddle: canvas.NewRectangle(p.fillColor),
+		trackLeft: canvas.NewCircle(track), trackMiddle: canvas.NewRectangle(track), trackRight: canvas.NewCircle(track),
+		fillLeft: canvas.NewCircle(fill), fillRight: canvas.NewCircle(fill), fillMiddle: canvas.NewRectangle(fill),
 	}
 }
 
@@ -84,8 +101,8 @@ func max32(a, b float32) float32 {
 }
 func (r *colorProgressRenderer) MinSize() fyne.Size { return fyne.NewSize(120, 14) }
 func (r *colorProgressRenderer) Refresh() {
-	track := r.progress.trackColor
-	fill := r.progress.fillColor
+	track := r.progress.track()
+	fill := r.progress.fill()
 	r.trackLeft.FillColor, r.trackRight.FillColor, r.trackMiddle.FillColor = track, track, track
 	r.fillLeft.FillColor, r.fillRight.FillColor, r.fillMiddle.FillColor = fill, fill, fill
 	r.trackLeft.Refresh()

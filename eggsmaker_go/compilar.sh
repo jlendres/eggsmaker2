@@ -21,7 +21,7 @@ else
 fi
 
 echo "==> Verificando formato Go"
-gofmt -w main.go gui.go process.go progress.go core_test.go
+gofmt -w main.go gui.go i18n.go appearance.go process.go progress.go core_test.go i18n_test.go appearance_test.go
 
 echo "==> Ejecutando pruebas"
 go test ./...

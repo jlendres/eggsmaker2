@@ -63,6 +63,18 @@ chmod +x dist/Eggsmaker_Go-*-x86_64.AppImage
 
 La primera versión del empaquetador está orientada a x86_64. La compatibilidad final debe comprobarse en las distribuciones de destino, especialmente en sistemas con bibliotecas gráficas antiguas.
 
+## Idiomas
+
+La interfaz está disponible en español (predeterminado), inglés, portugués e italiano. El idioma se cambia desde el selector de la ventana principal y la preferencia queda guardada para los siguientes inicios.
+
+## Apariencia y colores
+
+El botón **Apariencia** (arriba a la derecha, junto al selector de idioma) permite configurar los colores de toda la aplicación. Los cambios se aplican al instante y se guardan para los siguientes inicios.
+
+- **Tema**: *Predeterminado (actual)* conserva la apariencia original de Eggsmaker; *Seguir al sistema* adapta todos los colores al tema claro u oscuro del sistema (y cambia en vivo si el sistema lo hace); *Oscuro* y *Claro* fijan el tema sin importar el sistema.
+- **Color de acento**: naranja (predeterminado), azul, verde, violeta, rojo, cian o un color personalizado elegido con el selector. Afecta a títulos, botón activo, barras de progreso, marco y texto de la terminal integrada.
+- **Restablecer valores predeterminados** vuelve a la apariencia original (tema predeterminado + naranja).
+
 ## Funciones
 
 - `eggs config`: se abre en una terminal interactiva; los cambios se guardan desde el propio asistente de Penguins Eggs. En el flujo de generación se pregunta si se desea abrirlo.

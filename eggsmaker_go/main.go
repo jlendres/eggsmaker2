@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"image/color"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,10 +11,9 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/theme"
 )
 
-const AppVersion = "26.11.4"
+const AppVersion = "26.11.5"
 
 type DistroFamily string
 
@@ -26,16 +24,19 @@ const (
 )
 
 type AppState struct {
-	Distro      DistroFamily
-	DistroName  string
-	EggsVersion string
-	EggsPath    string
-	RealUser    string
-	RealHome    string
-	HostName    string
-	TargetDir   string
-	Window      fyne.Window
-	Log         *LogView
+	Distro       DistroFamily
+	DistroName   string
+	EggsVersion  string
+	EggsPath     string
+	RealUser     string
+	RealHome     string
+	HostName     string
+	TargetDir    string
+	Window       fyne.Window
+	Language     string
+	Log          *LogView
+	Appearance   appearanceSettings
+	themeRefresh []func()
 }
 
 func main() {
@@ -49,7 +50,12 @@ func main() {
 	state.validateEnvironment()
 
 	application := app.NewWithID("org.eggsmaker.go")
-	application.Settings().SetTheme(eggsmakerTheme{Theme: theme.DefaultTheme()})
+	state.Language = application.Preferences().StringWithFallback("language", "es")
+	if !validLanguage(state.Language) {
+		state.Language = "es"
+	}
+	state.Appearance = loadAppearance(application.Preferences())
+	application.Settings().SetTheme(newEggsmakerTheme(state.Appearance))
 	state.Window = application.NewWindow("Eggsmaker Go - v" + AppVersion)
 	state.buildGUI(application)
 }
@@ -138,20 +144,4 @@ func (s *AppState) logf(format string, args ...any) {
 	if s.Log != nil {
 		s.Log.Append(fmt.Sprintf(format, args...))
 	}
-}
-
-// eggsmakerTheme aplica naranja como color de acento y gris oscuro a los campos.
-type eggsmakerTheme struct{ fyne.Theme }
-
-func (t eggsmakerTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
-	if name == theme.ColorNameDisabled {
-		return color.NRGBA{R: 255, G: 125, B: 0, A: 255}
-	}
-	if name == theme.ColorNamePrimary {
-		return color.NRGBA{R: 255, G: 105, B: 0, A: 255}
-	}
-	if name == theme.ColorNameInputBackground {
-		return color.NRGBA{R: 42, G: 42, B: 48, A: 255}
-	}
-	return t.Theme.Color(name, variant)
 }

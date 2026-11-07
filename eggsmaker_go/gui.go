@@ -19,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -46,41 +47,73 @@ func (l *LogView) Append(v string) {
 func (s *AppState) buildGUI(myApp fyne.App) {
 	s.Window.Resize(fyne.NewSize(900, 680))
 	s.Window.SetMaster()
-	header := canvas.NewText("Eggsmaker Go  •  v"+AppVersion, color.NRGBA{R: 255, G: 125, B: 0, A: 255})
+	s.Window.SetContent(s.buildMainContent(myApp))
+	s.Window.ShowAndRun()
+}
+
+func (s *AppState) buildMainContent(myApp fyne.App) fyne.CanvasObject {
+	oldLog := ""
+	if s.Log != nil && s.Log.entry != nil {
+		oldLog = s.Log.entry.Text
+	}
+	s.themeRefresh = nil
+	header := canvas.NewText(tr(s.Language, "Eggsmaker Go")+"  •  v"+AppVersion, color.Transparent)
+	s.bindColor(colorNameAccentText, func(c color.Color) { header.Color = c; header.Refresh() })
 	header.TextSize = 22
 	header.TextStyle = fyne.TextStyle{Bold: true}
 	header.Alignment = fyne.TextAlignCenter
 	logo := canvas.NewImageFromResource(fyne.NewStaticResource("eggsmaker.png", eggsmakerLogoPNG))
 	logo.FillMode = canvas.ImageFillContain
 	logoBox := container.NewGridWrap(fyne.NewSize(44, 44), logo)
-	headerRow := container.NewCenter(container.NewHBox(logoBox, header))
-	status := widget.NewLabel(fmt.Sprintf("Penguins Eggs: %s   |   Distribución: %s", s.EggsVersion, s.DistroName))
+	appearanceBtn := widget.NewButtonWithIcon(tr(s.Language, "Apariencia"), theme.ColorPaletteIcon(), func() { s.showAppearanceDialog(myApp) })
+	headerRow := container.NewBorder(nil, nil, nil, container.NewHBox(appearanceBtn, widget.NewLabel(tr(s.Language, "Idioma:")), func() fyne.CanvasObject {
+		langSelect := widget.NewSelect([]string{"Español", "English", "Português", "Italiano"}, nil)
+		langNames := map[string]string{"es": "Español", "en": "English", "pt": "Português", "it": "Italiano"}
+		langCodes := map[string]string{"Español": "es", "English": "en", "Português": "pt", "Italiano": "it"}
+		if s.Language == "" {
+			s.Language = "es"
+		}
+		langSelect.SetSelected(langNames[s.Language])
+		langSelect.OnChanged = func(name string) {
+			if code, ok := langCodes[name]; ok && code != s.Language {
+				s.Language = code
+				myApp.Preferences().SetString("language", code)
+				s.Window.SetContent(s.buildMainContent(myApp))
+			}
+		}
+		return langSelect
+	}()), container.NewCenter(container.NewHBox(logoBox, header)))
+	status := widget.NewLabel(fmt.Sprintf(tr(s.Language, "Penguins Eggs: %s   |   Distribución: %s"), s.EggsVersion, s.DistroName))
 	if _, err := exec.LookPath("eggs"); err != nil {
-		status.SetText(status.Text + "   |   ADVERTENCIA: eggs no está instalado")
+		status.SetText(status.Text + tr(s.Language, "   |   ADVERTENCIA: eggs no está instalado"))
 	}
 	console := widget.NewMultiLineEntry()
 	console.SetMinRowsVisible(12)
 	console.Wrapping = fyne.TextWrapOff
 	console.TextStyle = fyne.TextStyle{Monospace: true}
-	console.SetText("Eggsmaker Go iniciado.\nLos registros de los procesos aparecerán aquí.\n")
+	console.SetText(oldLog)
+	if oldLog == "" {
+		console.SetText(tr(s.Language, "Eggsmaker Go iniciado.\nLos registros de los procesos aparecerán aquí.\n"))
+	}
 	console.Disable()
 	consoleScroll := container.NewScroll(console)
 	s.Log = &LogView{entry: console, scroll: consoleScroll}
-	progress := newColorProgress(color.NRGBA{R: 255, G: 105, B: 0, A: 255})
+	progress := newColorProgress(nil)
 	progress.Hide()
 	progressBusy := widget.NewProgressBarInfinite()
 	progressBusy.Hide()
-	progressText := widget.NewLabel("Listo")
-	isoInfo := canvas.NewText("", color.NRGBA{R: 255, G: 125, B: 0, A: 255})
+	progressText := widget.NewLabel(tr(s.Language, "Listo"))
+	isoInfo := canvas.NewText("", color.Transparent)
+	s.bindColor(colorNameAccentText, func(c color.Color) { isoInfo.Color = c; isoInfo.Refresh() })
 	isoInfo.TextSize = 14
 	isoInfo.TextStyle = fyne.TextStyle{Bold: true}
 
 	var btnISO *taskButton
-	btnISO = newTaskButton("Generar ISO personalizada", func() { s.startISOWorkflow(progress, progressBusy, progressText, isoInfo, btnISO) })
-	btnLive := newTaskButton("Instalación Live (Calamares / Krill)", func() { s.showInstallerDialog() })
-	btnPackages := newTaskButton("Gestor de paquetes", func() { s.showPackageManager() })
+	btnISO = newTaskButton(tr(s.Language, "Generar ISO personalizada"), func() { s.startISOWorkflow(progress, progressBusy, progressText, isoInfo, btnISO) })
+	btnLive := newTaskButton(tr(s.Language, "Instalación Live (Calamares / Krill)"), func() { s.showInstallerDialog() })
+	btnPackages := newTaskButton(tr(s.Language, "Gestor de paquetes"), func() { s.showPackageManager() })
 	var btnConfig *taskButton
-	btnConfig = newTaskButton("Editar configuración de Penguins Eggs", func() {
+	btnConfig = newTaskButton(tr(s.Language, "Editar configuración de Penguins Eggs"), func() {
 		fyne.Do(func() { btnConfig.busy = true; btnConfig.setActive(true) })
 		go func() {
 			defer fyne.Do(func() { btnConfig.busy = false; btnConfig.setActive(false) })
@@ -89,13 +122,13 @@ func (s *AppState) buildGUI(myApp fyne.App) {
 			}
 		}()
 	})
-	btnClear := widget.NewButton("Limpiar visor", func() { console.SetText("") })
-	btnExit := widget.NewButton("Salir", func() { s.Window.Close() })
+	btnClear := widget.NewButton(tr(s.Language, "Limpiar visor"), func() { console.SetText("") })
+	btnExit := widget.NewButton(tr(s.Language, "Salir"), func() { s.Window.Close() })
 
 	buttons := container.New(layout.NewGridLayout(2), btnISO, btnLive, btnPackages, btnConfig)
-	logHeader := container.NewBorder(nil, nil, widget.NewLabel("Terminal / salida de procesos"), btnClear)
+	logHeader := container.NewBorder(nil, nil, widget.NewLabel(tr(s.Language, "Terminal / salida de procesos")), btnClear)
 	consoleFrame := canvas.NewRectangle(color.Transparent)
-	consoleFrame.StrokeColor = color.NRGBA{R: 255, G: 125, B: 0, A: 255}
+	s.bindColor(colorNameAccentText, func(c color.Color) { consoleFrame.StrokeColor = c; consoleFrame.Refresh() })
 	consoleFrame.StrokeWidth = 1.5
 	consoleView := container.NewStack(consoleFrame, container.NewPadded(consoleScroll))
 	content := container.NewBorder(
@@ -103,9 +136,10 @@ func (s *AppState) buildGUI(myApp fyne.App) {
 		container.NewHBox(layout.NewSpacer(), btnExit), nil, nil,
 		consoleView,
 	)
-	s.Window.SetContent(content)
-	s.logf("Sistema detectado: %s (%s)\nUsuario: %s\nDirectorio de listas: %s\n", s.Distro, s.DistroName, s.RealUser, s.TargetDir)
-	s.Window.ShowAndRun()
+	if oldLog == "" {
+		s.logf("Sistema detectado: %s (%s)\nUsuario: %s\nDirectorio de listas: %s\n", s.Distro, s.DistroName, s.RealUser, s.TargetDir)
+	}
+	return content
 }
 
 func (s *AppState) eggBinary() string {
@@ -120,10 +154,10 @@ func (s *AppState) startISOWorkflow(progress *colorProgress, busy *widget.Progre
 		dialog.ShowError(fmt.Errorf("Penguins Eggs no está instalado o no está en PATH"), s.Window)
 		return
 	}
-	dialog.ShowConfirm("Configuración de escritorio", "¿Deseás copiar la configuración del escritorio con 'eggs tools skel'?", func(skel bool) {
+	dialog.ShowConfirm(tr(s.Language, "Configuración de escritorio"), tr(s.Language, "¿Deseás copiar la configuración del escritorio con 'eggs tools skel'?"), func(skel bool) {
 		continueClone := func() {
-			dialog.ShowConfirm("Clonación", "¿Deseás crear un clon del sistema (--clone)?", func(clone bool) {
-				dialog.ShowConfirm("Confirmar generación", "Se limpiarán los temporales de Eggs y se iniciará la creación de la ISO. ¿Continuar?", func(ok bool) {
+			dialog.ShowConfirm(tr(s.Language, "Clonación"), tr(s.Language, "¿Deseás crear un clon del sistema (--clone)?"), func(clone bool) {
+				dialog.ShowConfirm(tr(s.Language, "Confirmar generación"), tr(s.Language, "Se limpiarán los temporales de Eggs y se iniciará la creación de la ISO. ¿Continuar?"), func(ok bool) {
 					if ok {
 						go s.generateISO(clone, progress, busy, label, isoInfo, button)
 					}
@@ -131,7 +165,7 @@ func (s *AppState) startISOWorkflow(progress *colorProgress, busy *widget.Progre
 			}, s.Window)
 		}
 		askConfig := func() {
-			dialog.ShowConfirm("Configuración de Penguins Eggs", "¿Deseás editar la configuración con 'eggs config'? Los cambios se guardan desde el propio asistente.", func(edit bool) {
+			dialog.ShowConfirm(tr(s.Language, "Configuración de Penguins Eggs"), tr(s.Language, "¿Deseás editar la configuración con 'eggs config'? Los cambios se guardan desde el propio asistente."), func(edit bool) {
 				if !edit {
 					continueClone()
 					return
@@ -167,7 +201,7 @@ func (s *AppState) generateISO(clone bool, progress *colorProgress, busy *widget
 	fyne.Do(func() {
 		busy.Show()
 		busy.Start()
-		label.SetText("Generando ISO: progreso indeterminado; se muestran etapas y salida real.")
+		label.SetText(tr(s.Language, "Generando ISO: progreso indeterminado; se muestran etapas y salida real."))
 	})
 	args := []string{"remaster"}
 	if clone {
@@ -179,16 +213,16 @@ func (s *AppState) generateISO(clone bool, progress *colorProgress, busy *widget
 	}
 	command := shellQuote(eggsBin) + " kill && " + shellQuote(eggsBin) + " tools clean && " + shellQuote(eggsBin) + " " + strings.Join(args, " ")
 	startedAt := time.Now()
-	fyne.Do(func() { isoInfo.Text = "Generando ISO..."; isoInfo.Refresh() })
+	fyne.Do(func() { isoInfo.Text = tr(s.Language, "Generando ISO..."); isoInfo.Refresh() })
 	ctx := context.Background()
 	err := s.runLogged(ctx, "Preparar y generar ISO", "/bin/bash", "-lc", command)
 	fyne.Do(func() {
 		busy.Stop()
 		busy.Hide()
 		if err != nil {
-			label.SetText("La generación terminó con errores")
+			label.SetText(tr(s.Language, "La generación terminó con errores"))
 		} else {
-			label.SetText("Generación finalizada")
+			label.SetText(tr(s.Language, "Generación finalizada"))
 		}
 	})
 	if err != nil {
@@ -205,9 +239,9 @@ func (s *AppState) generateISO(clone bool, progress *colorProgress, busy *widget
 	}
 	if err != nil {
 		fyne.Do(func() {
-			isoInfo.Text = fmt.Sprintf("Tiempo de procesamiento: %s", time.Since(startedAt).Round(time.Second))
+			isoInfo.Text = fmt.Sprintf(tr(s.Language, "Tiempo de procesamiento: %s"), time.Since(startedAt).Round(time.Second))
 			isoInfo.Refresh()
-			dialog.ShowInformation("Generación finalizada", "No se encontró un archivo ISO en /home/eggs. Revisá el visor de salida.", s.Window)
+			dialog.ShowInformation(tr(s.Language, "Generación finalizada"), tr(s.Language, "No se encontró un archivo ISO en /home/eggs. Revisá el visor de salida."), s.Window)
 		})
 		return
 	}
@@ -218,11 +252,11 @@ func (s *AppState) generateISO(clone bool, progress *colorProgress, busy *widget
 		return
 	}
 	elapsed := time.Since(startedAt).Round(time.Second)
-	isoDetails := fmt.Sprintf("Tiempo de procesamiento: %s    |    Tamaño de la ISO: %s", elapsed, formatBytes(info.Size()))
+	isoDetails := fmt.Sprintf(tr(s.Language, "Tiempo de procesamiento: %s    |    Tamaño de la ISO: %s"), elapsed, formatBytes(info.Size()))
 	fyne.Do(func() {
 		isoInfo.Text = isoDetails
 		isoInfo.Refresh()
-		dialog.ShowConfirm("ISO generada", "Archivo encontrado:\n"+iso+"\n\n"+isoDetails+"\n\n¿Deseás copiarlo a otra ubicación?", func(copyIt bool) {
+		dialog.ShowConfirm(tr(s.Language, "ISO generada"), tr(s.Language, "Archivo encontrado:\n")+iso+"\n\n"+isoDetails+"\n\n¿Deseás copiarlo a otra ubicación?", func(copyIt bool) {
 			if copyIt {
 				s.chooseCopyDestination(iso, progress, label)
 			} else {
@@ -269,11 +303,11 @@ func (s *AppState) chooseCopyDestination(source string, progress *colorProgress,
 		}
 		dest := filepath.Join(uri.Path(), filepath.Base(source))
 		if filepath.Clean(dest) == filepath.Clean(source) {
-			dialog.ShowInformation("Copiar ISO", "El destino seleccionado es el mismo archivo de origen.", s.Window)
+			dialog.ShowInformation(tr(s.Language, "Copiar ISO"), tr(s.Language, "El destino seleccionado es el mismo archivo de origen."), s.Window)
 			return
 		}
 		if _, statErr := os.Stat(dest); statErr == nil {
-			dialog.ShowConfirm("Sobrescribir archivo", "Ya existe "+dest+". ¿Deseás reemplazarlo?", func(ok bool) {
+			dialog.ShowConfirm(tr(s.Language, "Sobrescribir archivo"), tr(s.Language, "Ya existe ")+dest+". ¿Deseás reemplazarlo?", func(ok bool) {
 				if ok {
 					go s.copyWithProgress(source, dest, progress, label)
 				}
@@ -305,7 +339,7 @@ func (s *AppState) copyWithProgress(source, dest string, progress *colorProgress
 	}
 	tempPath := out.Name()
 	defer os.Remove(tempPath)
-	fyne.Do(func() { progress.Show(); progress.SetValue(0); label.SetText("Copiando ISO...") })
+	fyne.Do(func() { progress.Show(); progress.SetValue(0); label.SetText(tr(s.Language, "Copiando ISO...")) })
 	buf := make([]byte, 4*1024*1024)
 	var copied int64
 	last := time.Now()
@@ -327,7 +361,7 @@ func (s *AppState) copyWithProgress(source, dest string, progress *colorProgress
 				copiedNow, totalNow := copied, info.Size()
 				fyne.Do(func() {
 					progress.SetValue(pct)
-					label.SetText(fmt.Sprintf("Copiando: %.1f%%  •  %s / %s", pct*100, formatBytes(copiedNow), formatBytes(totalNow)))
+					label.SetText(fmt.Sprintf(tr(s.Language, "Copiando: %.1f%%  •  %s / %s"), pct*100, formatBytes(copiedNow), formatBytes(totalNow)))
 				})
 				last = time.Now()
 			}
@@ -353,10 +387,10 @@ func (s *AppState) copyWithProgress(source, dest string, progress *colorProgress
 	fyne.Do(func() {
 		progress.Hide()
 		if err != nil {
-			label.SetText("Error durante la copia")
+			label.SetText(tr(s.Language, "Error durante la copia"))
 		} else {
 			progress.SetValue(1)
-			label.SetText("Copia completada: " + dest)
+			label.SetText(tr(s.Language, "Copia completada: ") + dest)
 		}
 	})
 	if err != nil {
@@ -364,7 +398,7 @@ func (s *AppState) copyWithProgress(source, dest string, progress *colorProgress
 		return
 	}
 	fyne.Do(func() {
-		dialog.ShowConfirm("Copia completada", "¿Deseás copiar la ISO a otra ubicación?", func(again bool) {
+		dialog.ShowConfirm(tr(s.Language, "Copia completada"), tr(s.Language, "¿Deseás copiar la ISO a otra ubicación?"), func(again bool) {
 			if again {
 				s.chooseCopyDestination(source, progress, label)
 			} else {
@@ -388,7 +422,7 @@ func formatBytes(n int64) string {
 }
 
 func (s *AppState) askCleanup() {
-	dialog.ShowConfirm("Limpieza", "¿Deseás eliminar los archivos temporales de construcción con 'eggs kill'?", func(ok bool) {
+	dialog.ShowConfirm(tr(s.Language, "Limpieza"), tr(s.Language, "¿Deseás eliminar los archivos temporales de construcción con 'eggs kill'?"), func(ok bool) {
 		if !ok {
 			return
 		}
@@ -399,17 +433,17 @@ func (s *AppState) askCleanup() {
 					dialog.ShowError(err, s.Window)
 					return
 				}
-				dialog.ShowInformation("Limpieza finalizada", "El proceso de limpieza de archivos temporales finalizó correctamente.", s.Window)
+				dialog.ShowInformation(tr(s.Language, "Limpieza finalizada"), tr(s.Language, "El proceso de limpieza de archivos temporales finalizó correctamente."), s.Window)
 			})
 		}()
 	}, s.Window)
 }
 
 func (s *AppState) showInstallerDialog() {
-	choices := []string{"Calamares (interfaz gráfica)", "Krill (terminal interactiva)"}
+	choices := []string{tr(s.Language, "Calamares (interfaz gráfica)"), tr(s.Language, "Krill (terminal interactiva)")}
 	selectBox := widget.NewSelect(choices, nil)
 	selectBox.SetSelected(choices[0])
-	dialog.ShowCustomConfirm("Instalación Live", "Ejecutar", "Cancelar", container.NewVBox(widget.NewLabel("Seleccioná el instalador:"), selectBox), func(ok bool) {
+	dialog.ShowCustomConfirm(tr(s.Language, "Instalación Live"), tr(s.Language, "Ejecutar"), tr(s.Language, "Cancelar"), container.NewVBox(widget.NewLabel(tr(s.Language, "Seleccioná el instalador:")), selectBox), func(ok bool) {
 		if !ok {
 			return
 		}
@@ -425,29 +459,29 @@ func (s *AppState) showInstallerDialog() {
 
 func (s *AppState) showPackageManager() {
 	if s.Distro != DistroArch && s.Distro != DistroDebian {
-		dialog.ShowInformation("Gestor de paquetes", "Distribución no reconocida: sólo se admiten Debian y Arch.", s.Window)
+		dialog.ShowInformation(tr(s.Language, "Gestor de paquetes"), tr(s.Language, "Distribución no reconocida: sólo se admiten Debian y Arch."), s.Window)
 		return
 	}
-	label := widget.NewLabel("Las listas se guardan en " + s.TargetDir + ". Primero recopilá las listas del sistema.")
-	collect := widget.NewButton("1. Recopilar listas", func() {
+	label := widget.NewLabel(tr(s.Language, "Las listas se guardan en ") + s.TargetDir + tr(s.Language, ". Primero recopilá las listas del sistema."))
+	collect := widget.NewButton(tr(s.Language, "1. Recopilar listas"), func() {
 		go func() {
 			if err := s.collectPackageLists(); err != nil {
 				fyne.Do(func() { dialog.ShowError(err, s.Window) })
 				return
 			}
-			fyne.Do(func() { label.SetText("Listas actualizadas en " + s.TargetDir) })
+			fyne.Do(func() { label.SetText(tr(s.Language, "Listas actualizadas en ") + s.TargetDir) })
 		}()
 	})
-	install := widget.NewButton("2. Instalar lista nativa", func() { s.chooseInstallList("lista-nativo.txt", "nativa") })
-	aurInstall := widget.NewButton("Instalar lista AUR (Arch)", func() { s.chooseInstallList("lista-aur.txt", "aur") })
-	chaoticInstall := widget.NewButton("Instalar lista Chaotic-AUR", func() { s.chooseInstallList("lista-chaotic-aur.txt", "chaotic") })
-	flatpakInstall := widget.NewButton("Instalar lista Flatpak", func() { s.chooseInstallList("lista-flatpak.txt", "flatpak") })
-	remove := widget.NewButton("3. Desinstalar paquetes", func() { s.chooseRemovalList("lista-nativo.txt", "Paquetes del sistema", false) })
-	aurRemove := widget.NewButton("4. Desinstalar paquetes AUR", func() { s.chooseRemovalList("lista-aur.txt", "Paquetes AUR", false) })
-	chaoticRemove := widget.NewButton("Desinstalar paquetes Chaotic-AUR", func() { s.chooseRemovalList("lista-chaotic-aur.txt", "Paquetes Chaotic-AUR", false) })
-	flatpakRemove := widget.NewButton("5. Desinstalar Flatpaks", func() { s.chooseRemovalList("lista-flatpak.txt", "Aplicaciones Flatpak", true) })
-	clearLists := widget.NewButton("Vaciar listas guardadas", func() {
-		dialog.ShowConfirm("Vaciar listas", "Se eliminarán únicamente los archivos de listas de paquetes de Eggsmaker. ¿Continuar?", func(ok bool) {
+	install := widget.NewButton(tr(s.Language, "2. Instalar lista nativa"), func() { s.chooseInstallList("lista-nativo.txt", "nativa") })
+	aurInstall := widget.NewButton(tr(s.Language, "Instalar lista AUR (Arch)"), func() { s.chooseInstallList("lista-aur.txt", "aur") })
+	chaoticInstall := widget.NewButton(tr(s.Language, "Instalar lista Chaotic-AUR"), func() { s.chooseInstallList("lista-chaotic-aur.txt", "chaotic") })
+	flatpakInstall := widget.NewButton(tr(s.Language, "Instalar lista Flatpak"), func() { s.chooseInstallList("lista-flatpak.txt", "flatpak") })
+	remove := widget.NewButton(tr(s.Language, "3. Desinstalar paquetes"), func() { s.chooseRemovalList("lista-nativo.txt", tr(s.Language, "Paquetes del sistema"), false) })
+	aurRemove := widget.NewButton(tr(s.Language, "4. Desinstalar paquetes AUR"), func() { s.chooseRemovalList("lista-aur.txt", tr(s.Language, "Paquetes AUR"), false) })
+	chaoticRemove := widget.NewButton(tr(s.Language, "Desinstalar paquetes Chaotic-AUR"), func() { s.chooseRemovalList("lista-chaotic-aur.txt", tr(s.Language, "Paquetes Chaotic-AUR"), false) })
+	flatpakRemove := widget.NewButton(tr(s.Language, "5. Desinstalar Flatpaks"), func() { s.chooseRemovalList("lista-flatpak.txt", tr(s.Language, "Aplicaciones Flatpak"), true) })
+	clearLists := widget.NewButton(tr(s.Language, "Vaciar listas guardadas"), func() {
+		dialog.ShowConfirm(tr(s.Language, "Vaciar listas"), tr(s.Language, "Se eliminarán únicamente los archivos de listas de paquetes de Eggsmaker. ¿Continuar?"), func(ok bool) {
 			if !ok {
 				return
 			}
@@ -457,17 +491,17 @@ func (s *AppState) showPackageManager() {
 				_ = os.Remove(path)
 				_ = os.Remove(selectionFilePath(path))
 			}
-			label.SetText("Listas eliminadas.")
+			label.SetText(tr(s.Language, "Listas eliminadas."))
 		}, s.Window)
 	})
-	openDir := widget.NewButton("Abrir carpeta de listas", func() {
+	openDir := widget.NewButton(tr(s.Language, "Abrir carpeta de listas"), func() {
 		if _, err := exec.LookPath("xdg-open"); err == nil {
 			_ = exec.Command("xdg-open", s.TargetDir).Start()
 		}
 	})
 	content := container.NewVBox(label, collect, install, aurInstall, chaoticInstall, flatpakInstall, remove, aurRemove, chaoticRemove, flatpakRemove, clearLists, openDir,
-		widget.NewLabel("La instalación/restauración requiere listas compatibles con la misma familia de distribución."))
-	managerDialog := dialog.NewCustom("Gestor de paquetes", "Cerrar", content, s.Window)
+		widget.NewLabel(tr(s.Language, "La instalación/restauración requiere listas compatibles con la misma familia de distribución.")))
+	managerDialog := dialog.NewCustom(tr(s.Language, "Gestor de paquetes"), tr(s.Language, "Cerrar"), content, s.Window)
 	managerDialog.Resize(fyne.NewSize(760, 700))
 	managerDialog.Show()
 }
@@ -591,19 +625,19 @@ func savePackageSelection(path string, selected []string) error {
 	return os.WriteFile(selectionFilePath(path), []byte(data), 0644)
 }
 
-func packageSelectionUI(path string, packages []string, instruction string) (*widget.CheckGroup, fyne.CanvasObject) {
+func packageSelectionUI(lang, path string, packages []string, instruction string) (*widget.CheckGroup, fyne.CanvasObject) {
 	checks := widget.NewCheckGroup(packages, nil)
 	checks.Horizontal = false
 	checks.SetSelected(loadSavedSelection(path, packages))
-	selectAll := widget.NewButton("Seleccionar todos", func() { checks.SetSelected(append([]string(nil), packages...)) })
-	selectNone := widget.NewButton("Deseleccionar todos", func() { checks.SetSelected(nil) })
-	saveLabel := widget.NewLabel("La selección guardada se conservará para la próxima sesión.")
-	save := widget.NewButton("Guardar selección", func() {
+	selectAll := widget.NewButton(tr(lang, "Seleccionar todos"), func() { checks.SetSelected(append([]string(nil), packages...)) })
+	selectNone := widget.NewButton(tr(lang, "Deseleccionar todos"), func() { checks.SetSelected(nil) })
+	saveLabel := widget.NewLabel(tr(lang, "La selección guardada se conservará para la próxima sesión."))
+	save := widget.NewButton(tr(lang, "Guardar selección"), func() {
 		if err := savePackageSelection(path, checks.Selected); err != nil {
-			saveLabel.SetText("Error al guardar: " + err.Error())
+			saveLabel.SetText(tr(lang, "Error al guardar: ") + err.Error())
 			return
 		}
-		saveLabel.SetText(fmt.Sprintf("Selección guardada: %d elementos.", len(checks.Selected)))
+		saveLabel.SetText(fmt.Sprintf(tr(lang, "Selección guardada: %d elementos."), len(checks.Selected)))
 	})
 	controls := container.NewHBox(selectAll, selectNone, save)
 	content := container.NewBorder(container.NewVBox(widget.NewLabel(instruction), controls), saveLabel, nil, nil, container.NewScroll(checks))
@@ -614,20 +648,20 @@ func (s *AppState) chooseRemovalList(fileName, title string, flatpak bool) {
 	path := filepath.Join(s.TargetDir, fileName)
 	packages, err := readPackageFile(path)
 	if err != nil {
-		dialog.ShowInformation(title, "No existe la lista. Primero utilizá 'Recopilar listas'.", s.Window)
+		dialog.ShowInformation(title, tr(s.Language, "No existe la lista. Primero utilizá 'Recopilar listas'."), s.Window)
 		return
 	}
 	if len(packages) == 0 {
-		dialog.ShowInformation(title, "La lista está vacía.", s.Window)
+		dialog.ShowInformation(title, tr(s.Language, "La lista está vacía."), s.Window)
 		return
 	}
-	checks, content := packageSelectionUI(path, packages, "Seleccioná los elementos que querés quitar:")
-	listDialog := dialog.NewCustomConfirm(title, "Desinstalar seleccionados", "Cerrar", content, func(ok bool) {
+	checks, content := packageSelectionUI(s.Language, path, packages, tr(s.Language, "Seleccioná los elementos que querés quitar:"))
+	listDialog := dialog.NewCustomConfirm(title, tr(s.Language, "Desinstalar seleccionados"), tr(s.Language, "Cerrar"), content, func(ok bool) {
 		if !ok || len(checks.Selected) == 0 {
 			return
 		}
 		selected := append([]string(nil), checks.Selected...)
-		dialog.ShowConfirm("Confirmar desinstalación", fmt.Sprintf("Se quitarán %d elementos. ¿Continuar?", len(selected)), func(confirmed bool) {
+		dialog.ShowConfirm(tr(s.Language, "Confirmar desinstalación"), fmt.Sprintf(tr(s.Language, "Se quitarán %d elementos. ¿Continuar?"), len(selected)), func(confirmed bool) {
 			if !confirmed {
 				return
 			}
@@ -657,20 +691,20 @@ func (s *AppState) chooseInstallList(fileName, kind string) {
 	path := filepath.Join(s.TargetDir, fileName)
 	packages, err := readPackageFile(path)
 	if err != nil {
-		dialog.ShowInformation("Instalar paquetes", "No existe "+path+". Primero recopilá las listas.", s.Window)
+		dialog.ShowInformation(tr(s.Language, "Instalar paquetes"), tr(s.Language, "No existe ")+path+tr(s.Language, ". Primero recopilá las listas."), s.Window)
 		return
 	}
 	if len(packages) == 0 {
-		dialog.ShowInformation("Instalar paquetes", "La lista está vacía.", s.Window)
+		dialog.ShowInformation(tr(s.Language, "Instalar paquetes"), tr(s.Language, "La lista está vacía."), s.Window)
 		return
 	}
-	checks, content := packageSelectionUI(path, packages, "Seleccioná los paquetes que querés instalar/restaurar:")
-	listDialog := dialog.NewCustomConfirm("Instalar paquetes", "Instalar seleccionados", "Cerrar", content, func(ok bool) {
+	checks, content := packageSelectionUI(s.Language, path, packages, tr(s.Language, "Seleccioná los paquetes que querés instalar/restaurar:"))
+	listDialog := dialog.NewCustomConfirm(tr(s.Language, "Instalar paquetes"), tr(s.Language, "Instalar seleccionados"), tr(s.Language, "Cerrar"), content, func(ok bool) {
 		if !ok || len(checks.Selected) == 0 {
 			return
 		}
 		selected := append([]string(nil), checks.Selected...)
-		dialog.ShowConfirm("Confirmar instalación", fmt.Sprintf("Se instalarán %d paquetes de la lista %s. ¿Continuar?", len(selected), kind), func(confirmed bool) {
+		dialog.ShowConfirm(tr(s.Language, "Confirmar instalación"), fmt.Sprintf(tr(s.Language, "Se instalarán %d paquetes de la lista %s. ¿Continuar?"), len(selected), kind), func(confirmed bool) {
 			if !confirmed {
 				return
 			}
@@ -679,7 +713,7 @@ func (s *AppState) chooseInstallList(fileName, kind string) {
 				switch kind {
 				case "aur":
 					if s.Distro != DistroArch {
-						err = fmt.Errorf("AUR sólo está disponible en Arch")
+						err = fmt.Errorf("%s", tr(s.Language, "AUR sólo está disponible en Arch"))
 					} else if _, e := exec.LookPath("yay"); e != nil {
 						err = fmt.Errorf("no se encontró yay")
 					} else {
@@ -687,7 +721,7 @@ func (s *AppState) chooseInstallList(fileName, kind string) {
 					}
 				case "chaotic":
 					if s.Distro != DistroArch {
-						err = fmt.Errorf("Chaotic-AUR sólo está disponible en Arch")
+						err = fmt.Errorf("%s", tr(s.Language, "Chaotic-AUR sólo está disponible en Arch"))
 					} else {
 						repoArgs := append([]string{"-S", "--needed", "--noconfirm"}, func() []string {
 							var a []string
@@ -700,15 +734,15 @@ func (s *AppState) chooseInstallList(fileName, kind string) {
 					}
 				case "flatpak":
 					if _, e := exec.LookPath("flatpak"); e != nil {
-						err = fmt.Errorf("Flatpak no está instalado")
+						err = fmt.Errorf("%s", tr(s.Language, "Flatpak no está instalado"))
 					} else {
 						err = s.runUserLogged(context.Background(), "Instalar Flatpaks", "flatpak", append([]string{"install", "--user", "--noninteractive", "-y"}, selected...)...)
 					}
 				default:
 					if s.Distro == DistroArch {
-						err = s.runLogged(context.Background(), "Instalar paquetes", "pacman", append([]string{"-S", "--needed", "--noconfirm"}, selected...)...)
+						err = s.runLogged(context.Background(), tr(s.Language, "Instalar paquetes"), "pacman", append([]string{"-S", "--needed", "--noconfirm"}, selected...)...)
 					} else {
-						err = s.runLogged(context.Background(), "Instalar paquetes", "apt-get", append([]string{"install", "-y"}, selected...)...)
+						err = s.runLogged(context.Background(), tr(s.Language, "Instalar paquetes"), "apt-get", append([]string{"install", "-y"}, selected...)...)
 					}
 				}
 				if err != nil {
@@ -721,29 +755,42 @@ func (s *AppState) chooseInstallList(fileName, kind string) {
 	listDialog.Show()
 }
 
-// taskButton dibuja su propio texto para poder resaltarlo en verde flúo mientras
-// la acción está activa, sin alterar el tema ni el texto de los demás controles.
+// taskButton dibuja su propio texto para poder resaltarlo mientras la acción está
+// activa. Sus colores se consultan al tema, de modo que siguen la apariencia elegida.
 type taskButton struct {
 	widget.BaseWidget
 	label  *canvas.Text
-	bg     *canvas.Rectangle
 	active bool
 	busy   bool
 	action func()
 }
 
 func newTaskButton(text string, action func()) *taskButton {
-	b := &taskButton{label: canvas.NewText(text, color.NRGBA{R: 245, G: 245, B: 245, A: 255}), bg: canvas.NewRectangle(color.NRGBA{R: 55, G: 55, B: 62, A: 255}), action: action}
+	b := &taskButton{label: canvas.NewText(text, themeColor(colorNameButtonText)), action: action}
 	b.label.Alignment = fyne.TextAlignCenter
 	b.label.TextStyle = fyne.TextStyle{Bold: true}
 	b.ExtendBaseWidget(b)
 	return b
 }
+
+func (b *taskButton) background() color.Color {
+	if b.active {
+		return themeColor(theme.ColorNamePrimary)
+	}
+	return themeColor(colorNameButtonBackground)
+}
+
+func (b *taskButton) textColor() color.Color {
+	if b.active {
+		return color.NRGBA{R: 245, G: 245, B: 245, A: 255}
+	}
+	return themeColor(colorNameButtonText)
+}
+
 func (b *taskButton) CreateRenderer() fyne.WidgetRenderer {
-	left := canvas.NewCircle(b.bg.FillColor)
-	right := canvas.NewCircle(b.bg.FillColor)
-	middle := canvas.NewRectangle(b.bg.FillColor)
-	return &taskButtonRenderer{button: b, left: left, right: right, middle: middle}
+	c := b.background()
+	b.label.Color = b.textColor()
+	return &taskButtonRenderer{button: b, left: canvas.NewCircle(c), right: canvas.NewCircle(c), middle: canvas.NewRectangle(c)}
 }
 func (b *taskButton) MinSize() fyne.Size { return fyne.NewSize(180, 42) }
 
@@ -766,8 +813,9 @@ func (r *taskButtonRenderer) Layout(size fyne.Size) {
 }
 func (r *taskButtonRenderer) MinSize() fyne.Size { return r.button.MinSize() }
 func (r *taskButtonRenderer) Refresh() {
-	c := r.button.bg.FillColor
+	c := r.button.background()
 	r.left.FillColor, r.right.FillColor, r.middle.FillColor = c, c, c
+	r.button.label.Color = r.button.textColor()
 	r.left.Refresh()
 	r.right.Refresh()
 	r.middle.Refresh()
@@ -793,12 +841,5 @@ func (b *taskButton) Tapped(*fyne.PointEvent) {
 }
 func (b *taskButton) setActive(active bool) {
 	b.active = active
-	if active {
-		b.bg.FillColor = color.NRGBA{R: 255, G: 105, B: 0, A: 255}
-	} else {
-		b.bg.FillColor = color.NRGBA{R: 55, G: 55, B: 62, A: 255}
-	}
-	b.bg.Refresh()
 	b.Refresh()
-	b.label.Refresh()
 }
