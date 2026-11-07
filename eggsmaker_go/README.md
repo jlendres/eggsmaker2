@@ -85,3 +85,14 @@ La primera versión del empaquetador está orientada a x86_64. La compatibilidad
 - La interfaz se ejecuta como usuario normal. Las tareas administrativas se elevan individualmente mediante `pkexec`; si no está instalado, se usa `sudo -n` y conviene ejecutar `sudo -v` antes de abrir la aplicación.
 - La terminal externa permanece abierta hasta que se presiona Enter, de modo que se pueden revisar los mensajes de `eggs config` y guardar los cambios dentro del asistente.
 - La barra de progreso de copia es porcentual y se actualiza con el tamaño real transferido. La generación de ISO usa barra indeterminada porque no hay un porcentaje oficial que `eggs remaster` garantice.
+
+### Instalación de una versión ya compilada
+
+Si el directorio ya contiene el ejecutable `eggsmaker` generado previamente, en el equipo de destino no hace falta instalar Go ni compilar. Ejecutá:
+
+```bash
+chmod +x instalar-compilado.sh
+./instalar-compilado.sh
+```
+
+El script instala el binario, el lanzador del menú, el icono y el README mediante `make install-files`. No ejecuta `go build`.

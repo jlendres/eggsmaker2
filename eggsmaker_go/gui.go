@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"image/color"
 	"io"
@@ -21,7 +22,13 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-type LogView struct{ entry *widget.Entry }
+//go:embed eggsmaker.png
+var eggsmakerLogoPNG []byte
+
+type LogView struct {
+	entry  *widget.Entry
+	scroll *container.Scroll
+}
 
 func (l *LogView) Append(v string) {
 	if l == nil || l.entry == nil {
@@ -30,13 +37,23 @@ func (l *LogView) Append(v string) {
 	fyne.Do(func() {
 		l.entry.SetText(l.entry.Text + v)
 		l.entry.Refresh()
+		if l.scroll != nil {
+			l.scroll.ScrollToBottom()
+		}
 	})
 }
 
 func (s *AppState) buildGUI(myApp fyne.App) {
 	s.Window.Resize(fyne.NewSize(900, 680))
 	s.Window.SetMaster()
-	header := widget.NewLabelWithStyle("Eggsmaker Go  •  v"+AppVersion, fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	header := canvas.NewText("Eggsmaker Go  •  v"+AppVersion, color.NRGBA{R: 255, G: 125, B: 0, A: 255})
+	header.TextSize = 25
+	header.TextStyle = fyne.TextStyle{Bold: true}
+	header.Alignment = fyne.TextAlignCenter
+	logo := canvas.NewImageFromResource(fyne.NewStaticResource("eggsmaker.png", eggsmakerLogoPNG))
+	logo.FillMode = canvas.ImageFillContain
+	logoBox := container.NewGridWrap(fyne.NewSize(44, 44), logo)
+	headerRow := container.NewCenter(container.NewHBox(logoBox, header))
 	status := widget.NewLabel(fmt.Sprintf("Penguins Eggs: %s   |   Distribución: %s", s.EggsVersion, s.DistroName))
 	if _, err := exec.LookPath("eggs"); err != nil {
 		status.SetText(status.Text + "   |   ADVERTENCIA: eggs no está instalado")
@@ -46,18 +63,26 @@ func (s *AppState) buildGUI(myApp fyne.App) {
 	console.Wrapping = fyne.TextWrapOff
 	console.SetText("Eggsmaker Go iniciado.\nLos registros de los procesos aparecerán aquí.\n")
 	console.Disable()
-	s.Log = &LogView{entry: console}
+	consoleScroll := container.NewScroll(console)
+	s.Log = &LogView{entry: console, scroll: consoleScroll}
 	progress := newColorProgress(color.NRGBA{R: 255, G: 105, B: 0, A: 255})
 	progress.Hide()
 	progressBusy := widget.NewProgressBarInfinite()
 	progressBusy.Hide()
 	progressText := widget.NewLabel("Listo")
+	isoInfo := canvas.NewText("", color.NRGBA{R: 255, G: 125, B: 0, A: 255})
+	isoInfo.TextSize = 14
+	isoInfo.TextStyle = fyne.TextStyle{Bold: true}
 
-	btnISO := widget.NewButton("Generar ISO personalizada", func() { s.startISOWorkflow(progress, progressBusy, progressText) })
-	btnLive := widget.NewButton("Instalación Live (Calamares / Krill)", func() { s.showInstallerDialog() })
-	btnPackages := widget.NewButton("Gestor de paquetes", func() { s.showPackageManager() })
-	btnConfig := widget.NewButton("Editar configuración de Penguins Eggs", func() {
+	var btnISO *taskButton
+	btnISO = newTaskButton("Generar ISO personalizada", func() { s.startISOWorkflow(progress, progressBusy, progressText, isoInfo, btnISO) })
+	btnLive := newTaskButton("Instalación Live (Calamares / Krill)", func() { s.showInstallerDialog() })
+	btnPackages := newTaskButton("Gestor de paquetes", func() { s.showPackageManager() })
+	var btnConfig *taskButton
+	btnConfig = newTaskButton("Editar configuración de Penguins Eggs", func() {
+		fyne.Do(func() { btnConfig.busy = true; btnConfig.setActive(true) })
 		go func() {
+			defer fyne.Do(func() { btnConfig.busy = false; btnConfig.setActive(false) })
 			if err := s.runInteractive(shellQuote(s.eggBinary())+" config", "Eggsmaker Go - eggs config"); err != nil {
 				fyne.Do(func() { dialog.ShowError(err, s.Window) })
 			}
@@ -71,9 +96,9 @@ func (s *AppState) buildGUI(myApp fyne.App) {
 	consoleFrame := canvas.NewRectangle(color.Transparent)
 	consoleFrame.StrokeColor = color.NRGBA{R: 190, G: 190, B: 198, A: 255}
 	consoleFrame.StrokeWidth = 1.5
-	consoleView := container.NewStack(consoleFrame, container.NewPadded(container.NewScroll(console)))
+	consoleView := container.NewStack(consoleFrame, container.NewPadded(consoleScroll))
 	content := container.NewBorder(
-		container.NewVBox(header, status, widget.NewSeparator(), buttons, widget.NewSeparator(), progressText, progressBusy, progress, logHeader),
+		container.NewVBox(headerRow, status, widget.NewSeparator(), buttons, widget.NewSeparator(), progressText, isoInfo, progressBusy, progress, logHeader),
 		container.NewHBox(layout.NewSpacer(), btnExit), nil, nil,
 		consoleView,
 	)
@@ -89,7 +114,7 @@ func (s *AppState) eggBinary() string {
 	return "eggs"
 }
 
-func (s *AppState) startISOWorkflow(progress *colorProgress, busy *widget.ProgressBarInfinite, label *widget.Label) {
+func (s *AppState) startISOWorkflow(progress *colorProgress, busy *widget.ProgressBarInfinite, label *widget.Label, isoInfo *canvas.Text, button *taskButton) {
 	if _, err := exec.LookPath("eggs"); err != nil {
 		dialog.ShowError(fmt.Errorf("Penguins Eggs no está instalado o no está en PATH"), s.Window)
 		return
@@ -99,7 +124,7 @@ func (s *AppState) startISOWorkflow(progress *colorProgress, busy *widget.Progre
 			dialog.ShowConfirm("Clonación", "¿Deseás crear un clon del sistema (--clone)?", func(clone bool) {
 				dialog.ShowConfirm("Confirmar generación", "Se limpiarán los temporales de Eggs y se iniciará la creación de la ISO. ¿Continuar?", func(ok bool) {
 					if ok {
-						go s.generateISO(clone, progress, busy, label)
+						go s.generateISO(clone, progress, busy, label, isoInfo, button)
 					}
 				}, s.Window)
 			}, s.Window)
@@ -135,7 +160,9 @@ func (s *AppState) startISOWorkflow(progress *colorProgress, busy *widget.Progre
 	}, s.Window)
 }
 
-func (s *AppState) generateISO(clone bool, progress *colorProgress, busy *widget.ProgressBarInfinite, label *widget.Label) {
+func (s *AppState) generateISO(clone bool, progress *colorProgress, busy *widget.ProgressBarInfinite, label *widget.Label, isoInfo *canvas.Text, button *taskButton) {
+	fyne.Do(func() { button.busy = true; button.setActive(true) })
+	defer fyne.Do(func() { button.busy = false; button.setActive(false) })
 	fyne.Do(func() {
 		busy.Show()
 		busy.Start()
@@ -151,6 +178,7 @@ func (s *AppState) generateISO(clone bool, progress *colorProgress, busy *widget
 	}
 	command := shellQuote(eggsBin) + " kill && " + shellQuote(eggsBin) + " tools clean && " + shellQuote(eggsBin) + " " + strings.Join(args, " ")
 	startedAt := time.Now()
+	fyne.Do(func() { isoInfo.Text = "Generando ISO..."; isoInfo.Refresh() })
 	ctx := context.Background()
 	err := s.runLogged(ctx, "Preparar y generar ISO", "/bin/bash", "-lc", command)
 	fyne.Do(func() {
@@ -176,12 +204,24 @@ func (s *AppState) generateISO(clone bool, progress *colorProgress, busy *widget
 	}
 	if err != nil {
 		fyne.Do(func() {
+			isoInfo.Text = fmt.Sprintf("Tiempo de procesamiento: %s", time.Since(startedAt).Round(time.Second))
+			isoInfo.Refresh()
 			dialog.ShowInformation("Generación finalizada", "No se encontró un archivo ISO en /home/eggs. Revisá el visor de salida.", s.Window)
 		})
 		return
 	}
+	info, statErr := os.Stat(iso)
+	if statErr != nil {
+		err = statErr
+		fyne.Do(func() { dialog.ShowError(err, s.Window) })
+		return
+	}
+	elapsed := time.Since(startedAt).Round(time.Second)
+	isoDetails := fmt.Sprintf("Tiempo de procesamiento: %s    |    Tamaño de la ISO: %s", elapsed, formatBytes(info.Size()))
 	fyne.Do(func() {
-		dialog.ShowConfirm("ISO generada", "Archivo encontrado:\n"+iso+"\n\n¿Deseás copiarlo a otra ubicación?", func(copyIt bool) {
+		isoInfo.Text = isoDetails
+		isoInfo.Refresh()
+		dialog.ShowConfirm("ISO generada", "Archivo encontrado:\n"+iso+"\n\n"+isoDetails+"\n\n¿Deseás copiarlo a otra ubicación?", func(copyIt bool) {
 			if copyIt {
 				s.chooseCopyDestination(iso, progress, label)
 			} else {
@@ -348,9 +388,19 @@ func formatBytes(n int64) string {
 
 func (s *AppState) askCleanup() {
 	dialog.ShowConfirm("Limpieza", "¿Deseás eliminar los archivos temporales de construcción con 'eggs kill'?", func(ok bool) {
-		if ok {
-			go func() { _ = s.runLogged(context.Background(), "Limpiar temporales", "eggs", "kill") }()
+		if !ok {
+			return
 		}
+		go func() {
+			err := s.runLogged(context.Background(), "Limpiar temporales", "eggs", "kill")
+			fyne.Do(func() {
+				if err != nil {
+					dialog.ShowError(err, s.Window)
+					return
+				}
+				dialog.ShowInformation("Limpieza finalizada", "El proceso de limpieza de archivos temporales finalizó correctamente.", s.Window)
+			})
+		}()
 	}, s.Window)
 }
 
@@ -621,4 +671,49 @@ func (s *AppState) chooseInstallList(fileName, kind string) {
 	}, s.Window)
 	listDialog.Resize(fyne.NewSize(760, 580))
 	listDialog.Show()
+}
+
+// taskButton dibuja su propio texto para poder resaltarlo en verde flúo mientras
+// la acción está activa, sin alterar el tema ni el texto de los demás controles.
+type taskButton struct {
+	widget.BaseWidget
+	label  *canvas.Text
+	bg     *canvas.Rectangle
+	active bool
+	busy   bool
+	action func()
+}
+
+func newTaskButton(text string, action func()) *taskButton {
+	b := &taskButton{label: canvas.NewText(text, color.NRGBA{R: 245, G: 245, B: 245, A: 255}), bg: canvas.NewRectangle(color.NRGBA{R: 0, G: 0, B: 0, A: 255}), action: action}
+	b.label.Alignment = fyne.TextAlignCenter
+	b.label.TextStyle = fyne.TextStyle{Bold: true}
+	b.ExtendBaseWidget(b)
+	return b
+}
+func (b *taskButton) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(container.NewStack(b.bg, container.NewCenter(b.label)))
+}
+func (b *taskButton) MinSize() fyne.Size { return fyne.NewSize(180, 42) }
+func (b *taskButton) Tapped(*fyne.PointEvent) {
+	b.setActive(true)
+	if b.action != nil {
+		b.action()
+	}
+	time.AfterFunc(700*time.Millisecond, func() {
+		fyne.Do(func() {
+			if !b.busy {
+				b.setActive(false)
+			}
+		})
+	})
+}
+func (b *taskButton) setActive(active bool) {
+	b.active = active
+	if active {
+		b.label.Color = color.NRGBA{R: 57, G: 255, B: 20, A: 255}
+	} else {
+		b.label.Color = color.NRGBA{R: 245, G: 245, B: 245, A: 255}
+	}
+	b.label.Refresh()
 }

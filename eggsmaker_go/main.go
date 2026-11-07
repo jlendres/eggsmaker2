@@ -15,7 +15,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 )
 
-const AppVersion = "26.11.1"
+const AppVersion = "26.11.2"
 
 type DistroFamily string
 
@@ -50,7 +50,7 @@ func main() {
 
 	application := app.NewWithID("org.eggsmaker.go")
 	application.Settings().SetTheme(eggsmakerTheme{Theme: theme.DefaultTheme()})
-	state.Window = application.NewWindow("Eggsmaker Go")
+	state.Window = application.NewWindow("Eggsmaker Go - v" + AppVersion)
 	state.buildGUI(application)
 }
 

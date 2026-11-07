@@ -1,0 +1,21 @@
+ajustes en eggsmaker Go:
+
+1- titulo de la aplicacion:
+aumentar la fuente y que tenga color naranja (Eggsmaker Go - version)
+
+el texto del boton que se presione , tenga color verde fluo y volver al color original al finalizar la tarea.
+
+agregar tiempo de procesamiento cuando se genera la iso - incluir tamaño de la iso - (color naranja)
+
+terminal /salida de proceso :
+
+que muestre la parte inferior de la ventana de la terminal ,de forma tal que se pueda visualizar lo que ocurre.
+
+una vez que finaliza el proceso de limpieza de los archivos temporales que aparezca una ventana
+que indique que el proceso de limpieza finalizo.
+
+
+instalacion:
+
+crear un script que se llame instalar-compilado.sh , que simplemente instale la aplicacion compilada
+sin necesidad de compilar cada vez que se instala.
