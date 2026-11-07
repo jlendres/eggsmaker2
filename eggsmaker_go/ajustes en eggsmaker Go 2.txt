@@ -1,0 +1,26 @@
+ajustes en eggsmaker Go:
+
+1- ajuste visual:
+
+color de fondo de los botones:
+ color gris - igual al color de fondo del visor de terminal.
+ redondear la forma de los botones
+ 
+color de texto :
+
+color de texto del visor de terminal naranja (similar a color de titulo)
+marco de la terminal actualmente en cyan, pasorlo a naranja
+resaltado de botones actualmente en verde fluo , ponerlo en color naranja intenso
+el texto de los botones permanece en blanco.
+
+operatividad:
+
+la lista de paquetes instalados deberia tener la opcion de seleccionar/deseleccionar todos
+para luego marcar/desmarcar para instalacion o desinstalacion.
+esto serviria para evitar marcar uno por uno.
+obviamente permitir guardar esos cambios para luego aplicarlos.
+
+Si es posible las carpetas del explorador para elegir donde se guarda la iso generada
+deberian ser de color naranja. (esto no es imprescindible)
+
+achicar levemente la fuente del titulo (Eggsmaker Go v ....)

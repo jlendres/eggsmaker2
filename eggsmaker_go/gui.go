@@ -47,7 +47,7 @@ func (s *AppState) buildGUI(myApp fyne.App) {
 	s.Window.Resize(fyne.NewSize(900, 680))
 	s.Window.SetMaster()
 	header := canvas.NewText("Eggsmaker Go  •  v"+AppVersion, color.NRGBA{R: 255, G: 125, B: 0, A: 255})
-	header.TextSize = 25
+	header.TextSize = 22
 	header.TextStyle = fyne.TextStyle{Bold: true}
 	header.Alignment = fyne.TextAlignCenter
 	logo := canvas.NewImageFromResource(fyne.NewStaticResource("eggsmaker.png", eggsmakerLogoPNG))
@@ -61,6 +61,7 @@ func (s *AppState) buildGUI(myApp fyne.App) {
 	console := widget.NewMultiLineEntry()
 	console.SetMinRowsVisible(12)
 	console.Wrapping = fyne.TextWrapOff
+	console.TextStyle = fyne.TextStyle{Monospace: true}
 	console.SetText("Eggsmaker Go iniciado.\nLos registros de los procesos aparecerán aquí.\n")
 	console.Disable()
 	consoleScroll := container.NewScroll(console)
@@ -94,7 +95,7 @@ func (s *AppState) buildGUI(myApp fyne.App) {
 	buttons := container.New(layout.NewGridLayout(2), btnISO, btnLive, btnPackages, btnConfig)
 	logHeader := container.NewBorder(nil, nil, widget.NewLabel("Terminal / salida de procesos"), btnClear)
 	consoleFrame := canvas.NewRectangle(color.Transparent)
-	consoleFrame.StrokeColor = color.NRGBA{R: 190, G: 190, B: 198, A: 255}
+	consoleFrame.StrokeColor = color.NRGBA{R: 255, G: 125, B: 0, A: 255}
 	consoleFrame.StrokeWidth = 1.5
 	consoleView := container.NewStack(consoleFrame, container.NewPadded(consoleScroll))
 	content := container.NewBorder(
@@ -452,7 +453,9 @@ func (s *AppState) showPackageManager() {
 			}
 			names := []string{"lista-nativo.txt", "lista-aur.txt", "lista-chaotic-aur.txt", "lista-flatpak.txt"}
 			for _, name := range names {
-				_ = os.Remove(filepath.Join(s.TargetDir, name))
+				path := filepath.Join(s.TargetDir, name)
+				_ = os.Remove(path)
+				_ = os.Remove(selectionFilePath(path))
 			}
 			label.SetText("Listas eliminadas.")
 		}, s.Window)
@@ -560,6 +563,53 @@ func readPackageFile(path string) ([]string, error) {
 
 var regexpPackage = regexp.MustCompile(`^[A-Za-z0-9@._+:-]+$`)
 
+func selectionFilePath(path string) string { return path + ".seleccion" }
+
+func loadSavedSelection(path string, packages []string) []string {
+	selected, err := readPackageFile(selectionFilePath(path))
+	if err != nil {
+		return nil
+	}
+	allowed := make(map[string]bool, len(packages))
+	for _, p := range packages {
+		allowed[p] = true
+	}
+	var result []string
+	for _, p := range selected {
+		if allowed[p] {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+func savePackageSelection(path string, selected []string) error {
+	data := strings.Join(selected, "\n")
+	if len(selected) > 0 {
+		data += "\n"
+	}
+	return os.WriteFile(selectionFilePath(path), []byte(data), 0644)
+}
+
+func packageSelectionUI(path string, packages []string, instruction string) (*widget.CheckGroup, fyne.CanvasObject) {
+	checks := widget.NewCheckGroup(packages, nil)
+	checks.Horizontal = false
+	checks.SetSelected(loadSavedSelection(path, packages))
+	selectAll := widget.NewButton("Seleccionar todos", func() { checks.SetSelected(append([]string(nil), packages...)) })
+	selectNone := widget.NewButton("Deseleccionar todos", func() { checks.SetSelected(nil) })
+	saveLabel := widget.NewLabel("La selección guardada se conservará para la próxima sesión.")
+	save := widget.NewButton("Guardar selección", func() {
+		if err := savePackageSelection(path, checks.Selected); err != nil {
+			saveLabel.SetText("Error al guardar: " + err.Error())
+			return
+		}
+		saveLabel.SetText(fmt.Sprintf("Selección guardada: %d elementos.", len(checks.Selected)))
+	})
+	controls := container.NewHBox(selectAll, selectNone, save)
+	content := container.NewBorder(container.NewVBox(widget.NewLabel(instruction), controls), saveLabel, nil, nil, container.NewScroll(checks))
+	return checks, content
+}
+
 func (s *AppState) chooseRemovalList(fileName, title string, flatpak bool) {
 	path := filepath.Join(s.TargetDir, fileName)
 	packages, err := readPackageFile(path)
@@ -571,10 +621,8 @@ func (s *AppState) chooseRemovalList(fileName, title string, flatpak bool) {
 		dialog.ShowInformation(title, "La lista está vacía.", s.Window)
 		return
 	}
-	checks := widget.NewCheckGroup(packages, nil)
-	checks.Horizontal = false
-	content := container.NewBorder(widget.NewLabel("Seleccioná únicamente los elementos que querés quitar:"), nil, nil, nil, container.NewScroll(checks))
-	listDialog := dialog.NewCustomConfirm(title, "Desinstalar", "Cancelar", content, func(ok bool) {
+	checks, content := packageSelectionUI(path, packages, "Seleccioná los elementos que querés quitar:")
+	listDialog := dialog.NewCustomConfirm(title, "Desinstalar seleccionados", "Cerrar", content, func(ok bool) {
 		if !ok || len(checks.Selected) == 0 {
 			return
 		}
@@ -601,7 +649,7 @@ func (s *AppState) chooseRemovalList(fileName, title string, flatpak bool) {
 			}()
 		}, s.Window)
 	}, s.Window)
-	listDialog.Resize(fyne.NewSize(760, 580))
+	listDialog.Resize(fyne.NewSize(800, 620))
 	listDialog.Show()
 }
 
@@ -616,10 +664,8 @@ func (s *AppState) chooseInstallList(fileName, kind string) {
 		dialog.ShowInformation("Instalar paquetes", "La lista está vacía.", s.Window)
 		return
 	}
-	checks := widget.NewCheckGroup(packages, nil)
-	checks.Horizontal = false
-	content := container.NewBorder(widget.NewLabel("Seleccioná los paquetes que querés instalar/restaurar:"), nil, nil, nil, container.NewScroll(checks))
-	listDialog := dialog.NewCustomConfirm("Instalar paquetes", "Instalar", "Cancelar", content, func(ok bool) {
+	checks, content := packageSelectionUI(path, packages, "Seleccioná los paquetes que querés instalar/restaurar:")
+	listDialog := dialog.NewCustomConfirm("Instalar paquetes", "Instalar seleccionados", "Cerrar", content, func(ok bool) {
 		if !ok || len(checks.Selected) == 0 {
 			return
 		}
@@ -643,11 +689,13 @@ func (s *AppState) chooseInstallList(fileName, kind string) {
 					if s.Distro != DistroArch {
 						err = fmt.Errorf("Chaotic-AUR sólo está disponible en Arch")
 					} else {
-						repoArgs := make([]string, 0, len(selected)+3)
-						repoArgs = append(repoArgs, "-S", "--needed", "--noconfirm")
-						for _, p := range selected {
-							repoArgs = append(repoArgs, "chaotic-aur/"+p)
-						}
+						repoArgs := append([]string{"-S", "--needed", "--noconfirm"}, func() []string {
+							var a []string
+							for _, p := range selected {
+								a = append(a, "chaotic-aur/"+p)
+							}
+							return a
+						}()...)
 						err = s.runLogged(context.Background(), "Instalar paquetes Chaotic-AUR", "pacman", repoArgs...)
 					}
 				case "flatpak":
@@ -669,7 +717,7 @@ func (s *AppState) chooseInstallList(fileName, kind string) {
 			}()
 		}, s.Window)
 	}, s.Window)
-	listDialog.Resize(fyne.NewSize(760, 580))
+	listDialog.Resize(fyne.NewSize(800, 620))
 	listDialog.Show()
 }
 
@@ -685,16 +733,51 @@ type taskButton struct {
 }
 
 func newTaskButton(text string, action func()) *taskButton {
-	b := &taskButton{label: canvas.NewText(text, color.NRGBA{R: 245, G: 245, B: 245, A: 255}), bg: canvas.NewRectangle(color.NRGBA{R: 0, G: 0, B: 0, A: 255}), action: action}
+	b := &taskButton{label: canvas.NewText(text, color.NRGBA{R: 245, G: 245, B: 245, A: 255}), bg: canvas.NewRectangle(color.NRGBA{R: 55, G: 55, B: 62, A: 255}), action: action}
 	b.label.Alignment = fyne.TextAlignCenter
 	b.label.TextStyle = fyne.TextStyle{Bold: true}
 	b.ExtendBaseWidget(b)
 	return b
 }
 func (b *taskButton) CreateRenderer() fyne.WidgetRenderer {
-	return widget.NewSimpleRenderer(container.NewStack(b.bg, container.NewCenter(b.label)))
+	left := canvas.NewCircle(b.bg.FillColor)
+	right := canvas.NewCircle(b.bg.FillColor)
+	middle := canvas.NewRectangle(b.bg.FillColor)
+	return &taskButtonRenderer{button: b, left: left, right: right, middle: middle}
 }
 func (b *taskButton) MinSize() fyne.Size { return fyne.NewSize(180, 42) }
+
+type taskButtonRenderer struct {
+	button      *taskButton
+	left, right *canvas.Circle
+	middle      *canvas.Rectangle
+}
+
+func (r *taskButtonRenderer) Layout(size fyne.Size) {
+	d := size.Height
+	r.left.Resize(fyne.NewSize(d, d))
+	r.left.Move(fyne.NewPos(0, 0))
+	r.right.Resize(fyne.NewSize(d, d))
+	r.right.Move(fyne.NewPos(size.Width-d, 0))
+	r.middle.Resize(fyne.NewSize(size.Width-d, d))
+	r.middle.Move(fyne.NewPos(d/2, 0))
+	r.button.label.Resize(size)
+	r.button.label.Move(fyne.NewPos(0, 0))
+}
+func (r *taskButtonRenderer) MinSize() fyne.Size { return r.button.MinSize() }
+func (r *taskButtonRenderer) Refresh() {
+	c := r.button.bg.FillColor
+	r.left.FillColor, r.right.FillColor, r.middle.FillColor = c, c, c
+	r.left.Refresh()
+	r.right.Refresh()
+	r.middle.Refresh()
+	r.button.label.Refresh()
+	r.Layout(r.button.Size())
+}
+func (r *taskButtonRenderer) Objects() []fyne.CanvasObject {
+	return []fyne.CanvasObject{r.middle, r.left, r.right, r.button.label}
+}
+func (r *taskButtonRenderer) Destroy() {}
 func (b *taskButton) Tapped(*fyne.PointEvent) {
 	b.setActive(true)
 	if b.action != nil {
@@ -711,9 +794,11 @@ func (b *taskButton) Tapped(*fyne.PointEvent) {
 func (b *taskButton) setActive(active bool) {
 	b.active = active
 	if active {
-		b.label.Color = color.NRGBA{R: 57, G: 255, B: 20, A: 255}
+		b.bg.FillColor = color.NRGBA{R: 255, G: 105, B: 0, A: 255}
 	} else {
-		b.label.Color = color.NRGBA{R: 245, G: 245, B: 245, A: 255}
+		b.bg.FillColor = color.NRGBA{R: 55, G: 55, B: 62, A: 255}
 	}
+	b.bg.Refresh()
+	b.Refresh()
 	b.label.Refresh()
 }

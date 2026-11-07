@@ -15,7 +15,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 )
 
-const AppVersion = "26.11.2"
+const AppVersion = "26.11.4"
 
 type DistroFamily string
 
@@ -140,16 +140,18 @@ func (s *AppState) logf(format string, args ...any) {
 	}
 }
 
-// eggsmakerTheme mejora el contraste del visor de procesos y usa violeta como
-// color principal, incluido el indicador de generación de ISO.
+// eggsmakerTheme aplica naranja como color de acento y gris oscuro a los campos.
 type eggsmakerTheme struct{ fyne.Theme }
 
 func (t eggsmakerTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
 	if name == theme.ColorNameDisabled {
-		return color.NRGBA{R: 0, G: 220, B: 255, A: 255}
+		return color.NRGBA{R: 255, G: 125, B: 0, A: 255}
 	}
 	if name == theme.ColorNamePrimary {
-		return color.NRGBA{R: 155, G: 75, B: 220, A: 255}
+		return color.NRGBA{R: 255, G: 105, B: 0, A: 255}
+	}
+	if name == theme.ColorNameInputBackground {
+		return color.NRGBA{R: 42, G: 42, B: 48, A: 255}
 	}
 	return t.Theme.Color(name, variant)
 }

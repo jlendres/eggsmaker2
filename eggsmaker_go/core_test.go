@@ -48,3 +48,19 @@ func TestLatestISORequiresISO(t *testing.T) {
 		t.Fatal("latestISO should fail when no ISO exists")
 	}
 }
+
+func TestPackageSelectionPersistence(t *testing.T) {
+	listPath := filepath.Join(t.TempDir(), "lista-nativo.txt")
+	selected := []string{"bash", "linux-firmware"}
+	if err := savePackageSelection(listPath, selected); err != nil {
+		t.Fatal(err)
+	}
+	got := loadSavedSelection(listPath, []string{"bash", "linux-firmware", "vim"})
+	if len(got) != 2 || got[0] != "bash" || got[1] != "linux-firmware" {
+		t.Fatalf("loadSavedSelection()=%v, want %v", got, selected)
+	}
+	filtered := loadSavedSelection(listPath, []string{"bash", "vim"})
+	if len(filtered) != 1 || filtered[0] != "bash" {
+		t.Fatalf("loadSavedSelection() should ignore packages absent from current list: %v", filtered)
+	}
+}
