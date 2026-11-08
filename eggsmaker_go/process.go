@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -47,12 +46,17 @@ func (s *AppState) streamCommand(ctx context.Context, title string, cmd *exec.Cm
 		s.logf("[ERROR] No se pudo iniciar: %v\n", err)
 		return err
 	}
-	lines := make(chan string, 128)
+	output := make(chan []byte, 128)
 	read := func(r io.Reader) {
-		scanner := bufio.NewScanner(r)
-		scanner.Buffer(make([]byte, 4096), 1024*1024)
-		for scanner.Scan() {
-			lines <- scanner.Text()
+		buf := make([]byte, 4096)
+		for {
+			n, readErr := r.Read(buf)
+			if n > 0 {
+				output <- append([]byte(nil), buf[:n]...)
+			}
+			if readErr != nil {
+				return
+			}
 		}
 	}
 	var readers sync.WaitGroup
@@ -63,13 +67,13 @@ func (s *AppState) streamCommand(ctx context.Context, title string, cmd *exec.Cm
 	go func() { readers.Wait(); done <- cmd.Wait() }()
 	for {
 		select {
-		case line := <-lines:
-			s.logf("%s\n", line)
+		case chunk := <-output:
+			s.logf("%s", chunk)
 		case err := <-done:
 			for {
 				select {
-				case line := <-lines:
-					s.logf("%s\n", line)
+				case chunk := <-output:
+					s.logf("%s", chunk)
 				default:
 					if err != nil {
 						s.logf("[ERROR] Proceso finalizado: %v\n", err)

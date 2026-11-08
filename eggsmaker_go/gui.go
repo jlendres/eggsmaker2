@@ -27,8 +27,25 @@ import (
 var eggsmakerLogoPNG []byte
 
 type LogView struct {
-	entry  *widget.Entry
-	scroll *container.Scroll
+	entry        *widget.Entry
+	scroll       *container.Scroll
+	cursorRow    int
+	cursorColumn int
+}
+
+func (l *LogView) moveCursorToEnd() {
+	if l == nil || l.entry == nil {
+		return
+	}
+	text := l.entry.Text
+	l.cursorRow = strings.Count(text, "\n")
+	if lastNewline := strings.LastIndexByte(text, '\n'); lastNewline >= 0 {
+		text = text[lastNewline+1:]
+	}
+	l.cursorColumn = len([]rune(text))
+	l.entry.CursorRow = l.cursorRow
+	l.entry.CursorColumn = l.cursorColumn
+	l.entry.Refresh()
 }
 
 func (l *LogView) Append(v string) {
@@ -36,7 +53,17 @@ func (l *LogView) Append(v string) {
 		return
 	}
 	fyne.Do(func() {
-		l.entry.SetText(l.entry.Text + v)
+		l.entry.Append(v)
+		for _, r := range v {
+			if r == '\n' {
+				l.cursorRow++
+				l.cursorColumn = 0
+			} else {
+				l.cursorColumn++
+			}
+		}
+		l.entry.CursorRow = l.cursorRow
+		l.entry.CursorColumn = l.cursorColumn
 		l.entry.Refresh()
 		if l.scroll != nil {
 			l.scroll.ScrollToBottom()
@@ -98,6 +125,7 @@ func (s *AppState) buildMainContent(myApp fyne.App) fyne.CanvasObject {
 	console.Disable()
 	consoleScroll := container.NewScroll(console)
 	s.Log = &LogView{entry: console, scroll: consoleScroll}
+	s.Log.moveCursorToEnd()
 	progress := newColorProgress(nil)
 	progress.Hide()
 	progressBusy := widget.NewProgressBarInfinite()
@@ -115,7 +143,11 @@ func (s *AppState) buildMainContent(myApp fyne.App) fyne.CanvasObject {
 	btnConfig := newTaskButton(tr(s.Language, "Editar configuración de Penguins Eggs"), func() {
 		s.showEggsConfigDialog(nil)
 	})
-	btnClear := widget.NewButton(tr(s.Language, "Limpiar visor"), func() { console.SetText("") })
+	btnClear := widget.NewButton(tr(s.Language, "Limpiar visor"), func() {
+		console.SetText("")
+		s.Log.cursorRow = 0
+		s.Log.cursorColumn = 0
+	})
 	btnExit := widget.NewButton(tr(s.Language, "Salir"), func() { s.Window.Close() })
 
 	buttons := container.New(layout.NewGridLayout(2), btnISO, btnLive, btnPackages, btnConfig)
