@@ -112,15 +112,8 @@ func (s *AppState) buildMainContent(myApp fyne.App) fyne.CanvasObject {
 	btnISO = newTaskButton(tr(s.Language, "Generar ISO personalizada"), func() { s.startISOWorkflow(progress, progressBusy, progressText, isoInfo, btnISO) })
 	btnLive := newTaskButton(tr(s.Language, "Instalación Live (Calamares / Krill)"), func() { s.showInstallerDialog() })
 	btnPackages := newTaskButton(tr(s.Language, "Gestor de paquetes"), func() { s.showPackageManager() })
-	var btnConfig *taskButton
-	btnConfig = newTaskButton(tr(s.Language, "Editar configuración de Penguins Eggs"), func() {
-		fyne.Do(func() { btnConfig.busy = true; btnConfig.setActive(true) })
-		go func() {
-			defer fyne.Do(func() { btnConfig.busy = false; btnConfig.setActive(false) })
-			if err := s.runInteractive(shellQuote(s.eggBinary())+" config", "Eggsmaker Go - eggs config"); err != nil {
-				fyne.Do(func() { dialog.ShowError(err, s.Window) })
-			}
-		}()
+	btnConfig := newTaskButton(tr(s.Language, "Editar configuración de Penguins Eggs"), func() {
+		s.showEggsConfigDialog(nil)
 	})
 	btnClear := widget.NewButton(tr(s.Language, "Limpiar visor"), func() { console.SetText("") })
 	btnExit := widget.NewButton(tr(s.Language, "Salir"), func() { s.Window.Close() })
@@ -130,7 +123,20 @@ func (s *AppState) buildMainContent(myApp fyne.App) fyne.CanvasObject {
 	consoleFrame := canvas.NewRectangle(color.Transparent)
 	s.bindColor(colorNameAccentText, func(c color.Color) { consoleFrame.StrokeColor = c; consoleFrame.Refresh() })
 	consoleFrame.StrokeWidth = 1.5
-	consoleView := container.NewStack(consoleFrame, container.NewPadded(consoleScroll))
+	consoleOverride := container.NewThemeOverride(consoleScroll, consoleTheme{
+		Theme:      theme.Current(),
+		background: themeColor(colorNameConsoleBackground),
+		foreground: themeColor(colorNameAccentText),
+	})
+	s.themeRefresh = append(s.themeRefresh, func() {
+		consoleOverride.Theme = consoleTheme{
+			Theme:      theme.Current(),
+			background: themeColor(colorNameConsoleBackground),
+			foreground: themeColor(colorNameAccentText),
+		}
+		consoleOverride.Refresh()
+	})
+	consoleView := container.NewStack(consoleFrame, container.NewPadded(consoleOverride))
 	content := container.NewBorder(
 		container.NewVBox(headerRow, status, widget.NewSeparator(), buttons, widget.NewSeparator(), progressText, isoInfo, progressBusy, progress, logHeader),
 		container.NewHBox(layout.NewSpacer(), btnExit), nil, nil,
@@ -149,36 +155,50 @@ func (s *AppState) eggBinary() string {
 	return "eggs"
 }
 
+func (s *AppState) showConfirmNoDefault(title, message string, callback func(bool)) {
+	var d *dialog.CustomDialog
+	finished := false
+	finish := func(answer bool) {
+		if finished {
+			return
+		}
+		finished = true
+		d.Hide()
+		callback(answer)
+	}
+	yes := widget.NewButton(tr(s.Language, "Sí"), func() { finish(true) })
+	yes.Importance = widget.LowImportance
+	no := widget.NewButton(tr(s.Language, "No"), func() { finish(false) })
+	no.Importance = widget.HighImportance
+	buttons := container.NewHBox(layout.NewSpacer(), yes, no)
+	d = dialog.NewCustomWithoutButtons(title, container.NewVBox(widget.NewLabel(message), buttons), s.Window)
+	d.Resize(fyne.NewSize(460, d.MinSize().Height))
+	d.Show()
+}
+
 func (s *AppState) startISOWorkflow(progress *colorProgress, busy *widget.ProgressBarInfinite, label *widget.Label, isoInfo *canvas.Text, button *taskButton) {
 	if _, err := exec.LookPath("eggs"); err != nil {
 		dialog.ShowError(fmt.Errorf("Penguins Eggs no está instalado o no está en PATH"), s.Window)
 		return
 	}
-	dialog.ShowConfirm(tr(s.Language, "Configuración de escritorio"), tr(s.Language, "¿Deseás copiar la configuración del escritorio con 'eggs tools skel'?"), func(skel bool) {
+	s.showConfirmNoDefault(tr(s.Language, "Configuración de escritorio"), tr(s.Language, "¿Deseás copiar la configuración del escritorio con 'eggs tools skel'?"), func(skel bool) {
 		continueClone := func() {
-			dialog.ShowConfirm(tr(s.Language, "Clonación"), tr(s.Language, "¿Deseás crear un clon del sistema (--clone)?"), func(clone bool) {
-				dialog.ShowConfirm(tr(s.Language, "Confirmar generación"), tr(s.Language, "Se limpiarán los temporales de Eggs y se iniciará la creación de la ISO. ¿Continuar?"), func(ok bool) {
+			s.showConfirmNoDefault(tr(s.Language, "Clonación"), tr(s.Language, "¿Deseás crear un clon del sistema (--clone)?"), func(clone bool) {
+				s.showConfirmNoDefault(tr(s.Language, "Confirmar generación"), tr(s.Language, "Se limpiarán los temporales de Eggs y se iniciará la creación de la ISO. ¿Continuar?"), func(ok bool) {
 					if ok {
 						go s.generateISO(clone, progress, busy, label, isoInfo, button)
 					}
-				}, s.Window)
-			}, s.Window)
+				})
+			})
 		}
 		askConfig := func() {
-			dialog.ShowConfirm(tr(s.Language, "Configuración de Penguins Eggs"), tr(s.Language, "¿Deseás editar la configuración con 'eggs config'? Los cambios se guardan desde el propio asistente."), func(edit bool) {
+			s.showConfirmNoDefault(tr(s.Language, "Configuración de Penguins Eggs"), tr(s.Language, "¿Deseás editar la configuración con 'eggs config'? Los cambios se guardan desde el propio asistente."), func(edit bool) {
 				if !edit {
 					continueClone()
 					return
 				}
-				go func() {
-					err := s.runInteractive(shellQuote(s.eggBinary())+" config", "Eggsmaker Go - eggs config")
-					if err != nil {
-						fyne.Do(func() { dialog.ShowError(err, s.Window) })
-						return
-					}
-					fyne.Do(func() { continueClone() })
-				}()
-			}, s.Window)
+				s.showEggsConfigDialog(continueClone)
+			})
 		}
 		if skel {
 			go func() {
@@ -192,7 +212,7 @@ func (s *AppState) startISOWorkflow(progress *colorProgress, busy *widget.Progre
 		} else {
 			askConfig()
 		}
-	}, s.Window)
+	})
 }
 
 func (s *AppState) generateISO(clone bool, progress *colorProgress, busy *widget.ProgressBarInfinite, label *widget.Label, isoInfo *canvas.Text, button *taskButton) {
@@ -256,13 +276,13 @@ func (s *AppState) generateISO(clone bool, progress *colorProgress, busy *widget
 	fyne.Do(func() {
 		isoInfo.Text = isoDetails
 		isoInfo.Refresh()
-		dialog.ShowConfirm(tr(s.Language, "ISO generada"), tr(s.Language, "Archivo encontrado:\n")+iso+"\n\n"+isoDetails+"\n\n¿Deseás copiarlo a otra ubicación?", func(copyIt bool) {
+		s.showConfirmNoDefault(tr(s.Language, "ISO generada"), tr(s.Language, "Archivo encontrado:\n")+iso+"\n\n"+isoDetails+"\n\n¿Deseás copiarlo a otra ubicación?", func(copyIt bool) {
 			if copyIt {
 				s.chooseCopyDestination(iso, progress, label)
 			} else {
 				s.askCleanup()
 			}
-		}, s.Window)
+		})
 	})
 }
 
@@ -307,11 +327,11 @@ func (s *AppState) chooseCopyDestination(source string, progress *colorProgress,
 			return
 		}
 		if _, statErr := os.Stat(dest); statErr == nil {
-			dialog.ShowConfirm(tr(s.Language, "Sobrescribir archivo"), tr(s.Language, "Ya existe ")+dest+". ¿Deseás reemplazarlo?", func(ok bool) {
+			s.showConfirmNoDefault(tr(s.Language, "Sobrescribir archivo"), tr(s.Language, "Ya existe ")+dest+". ¿Deseás reemplazarlo?", func(ok bool) {
 				if ok {
 					go s.copyWithProgress(source, dest, progress, label)
 				}
-			}, s.Window)
+			})
 			return
 		}
 		go s.copyWithProgress(source, dest, progress, label)
@@ -398,13 +418,13 @@ func (s *AppState) copyWithProgress(source, dest string, progress *colorProgress
 		return
 	}
 	fyne.Do(func() {
-		dialog.ShowConfirm(tr(s.Language, "Copia completada"), tr(s.Language, "¿Deseás copiar la ISO a otra ubicación?"), func(again bool) {
+		s.showConfirmNoDefault(tr(s.Language, "Copia completada"), tr(s.Language, "¿Deseás copiar la ISO a otra ubicación?"), func(again bool) {
 			if again {
 				s.chooseCopyDestination(source, progress, label)
 			} else {
 				s.askCleanup()
 			}
-		}, s.Window)
+		})
 	})
 }
 
@@ -422,7 +442,7 @@ func formatBytes(n int64) string {
 }
 
 func (s *AppState) askCleanup() {
-	dialog.ShowConfirm(tr(s.Language, "Limpieza"), tr(s.Language, "¿Deseás eliminar los archivos temporales de construcción con 'eggs kill'?"), func(ok bool) {
+	s.showConfirmNoDefault(tr(s.Language, "Limpieza"), tr(s.Language, "¿Deseás eliminar los archivos temporales de construcción con 'eggs kill'?"), func(ok bool) {
 		if !ok {
 			return
 		}
@@ -436,7 +456,7 @@ func (s *AppState) askCleanup() {
 				dialog.ShowInformation(tr(s.Language, "Limpieza finalizada"), tr(s.Language, "El proceso de limpieza de archivos temporales finalizó correctamente."), s.Window)
 			})
 		}()
-	}, s.Window)
+	})
 }
 
 func (s *AppState) showInstallerDialog() {
@@ -481,7 +501,7 @@ func (s *AppState) showPackageManager() {
 	chaoticRemove := widget.NewButton(tr(s.Language, "Desinstalar paquetes Chaotic-AUR"), func() { s.chooseRemovalList("lista-chaotic-aur.txt", tr(s.Language, "Paquetes Chaotic-AUR"), false) })
 	flatpakRemove := widget.NewButton(tr(s.Language, "5. Desinstalar Flatpaks"), func() { s.chooseRemovalList("lista-flatpak.txt", tr(s.Language, "Aplicaciones Flatpak"), true) })
 	clearLists := widget.NewButton(tr(s.Language, "Vaciar listas guardadas"), func() {
-		dialog.ShowConfirm(tr(s.Language, "Vaciar listas"), tr(s.Language, "Se eliminarán únicamente los archivos de listas de paquetes de Eggsmaker. ¿Continuar?"), func(ok bool) {
+		s.showConfirmNoDefault(tr(s.Language, "Vaciar listas"), tr(s.Language, "Se eliminarán únicamente los archivos de listas de paquetes de Eggsmaker. ¿Continuar?"), func(ok bool) {
 			if !ok {
 				return
 			}
@@ -492,7 +512,7 @@ func (s *AppState) showPackageManager() {
 				_ = os.Remove(selectionFilePath(path))
 			}
 			label.SetText(tr(s.Language, "Listas eliminadas."))
-		}, s.Window)
+		})
 	})
 	openDir := widget.NewButton(tr(s.Language, "Abrir carpeta de listas"), func() {
 		if _, err := exec.LookPath("xdg-open"); err == nil {
@@ -661,7 +681,7 @@ func (s *AppState) chooseRemovalList(fileName, title string, flatpak bool) {
 			return
 		}
 		selected := append([]string(nil), checks.Selected...)
-		dialog.ShowConfirm(tr(s.Language, "Confirmar desinstalación"), fmt.Sprintf(tr(s.Language, "Se quitarán %d elementos. ¿Continuar?"), len(selected)), func(confirmed bool) {
+		s.showConfirmNoDefault(tr(s.Language, "Confirmar desinstalación"), fmt.Sprintf(tr(s.Language, "Se quitarán %d elementos. ¿Continuar?"), len(selected)), func(confirmed bool) {
 			if !confirmed {
 				return
 			}
@@ -681,7 +701,7 @@ func (s *AppState) chooseRemovalList(fileName, title string, flatpak bool) {
 					fyne.Do(func() { dialog.ShowError(err, s.Window) })
 				}
 			}()
-		}, s.Window)
+		})
 	}, s.Window)
 	listDialog.Resize(fyne.NewSize(800, 620))
 	listDialog.Show()
@@ -704,7 +724,7 @@ func (s *AppState) chooseInstallList(fileName, kind string) {
 			return
 		}
 		selected := append([]string(nil), checks.Selected...)
-		dialog.ShowConfirm(tr(s.Language, "Confirmar instalación"), fmt.Sprintf(tr(s.Language, "Se instalarán %d paquetes de la lista %s. ¿Continuar?"), len(selected), kind), func(confirmed bool) {
+		s.showConfirmNoDefault(tr(s.Language, "Confirmar instalación"), fmt.Sprintf(tr(s.Language, "Se instalarán %d paquetes de la lista %s. ¿Continuar?"), len(selected), kind), func(confirmed bool) {
 			if !confirmed {
 				return
 			}
@@ -749,7 +769,7 @@ func (s *AppState) chooseInstallList(fileName, kind string) {
 					fyne.Do(func() { dialog.ShowError(err, s.Window) })
 				}
 			}()
-		}, s.Window)
+		})
 	}, s.Window)
 	listDialog.Resize(fyne.NewSize(800, 620))
 	listDialog.Show()

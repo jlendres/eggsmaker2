@@ -1,6 +1,6 @@
 # Eggsmaker Go
 
-Aplicación gráfica para Linux basada en Penguins Eggs. Esta versión conserva el flujo principal de Eggsmaker Plus: copia opcional de configuración de escritorio, edición interactiva de `eggs config`, creación de ISO normal o clon, copia de ISO, limpieza de temporales, instaladores Calamares/Krill y gestión de listas de paquetes.
+Aplicación gráfica para Linux basada en Penguins Eggs. Esta versión conserva el flujo principal de Eggsmaker Plus: copia opcional de configuración de escritorio, edición gráfica de la configuración de Eggs, creación de ISO normal o clon, copia de ISO, limpieza de temporales, instaladores Calamares/Krill y gestión de listas de paquetes.
 
 ## Requisitos
 
@@ -9,7 +9,7 @@ Aplicación gráfica para Linux basada en Penguins Eggs. Esta versión conserva 
 - Debian/Ubuntu/BigLinux o Arch/CachyOS/Manjaro/EndeavourOS.
 - Dependencias gráficas de Fyne/OpenGL (el instalador intenta comprobarlas).
 - `pkexec` recomendado para autorización gráfica; si no está disponible, ejecutar `sudo -v` antes de iniciar Eggsmaker para autorizar la sesión.
-- Una terminal gráfica para el asistente interactivo `eggs config` y Krill.
+- Una terminal gráfica para Krill (el editor de configuración de Eggs está integrado en la aplicación).
 
 ## Compilar e instalar
 
@@ -29,6 +29,15 @@ chmod +x install.sh uninstall.sh compilar.sh
 ```
 
 El instalador comprueba Go y las bibliotecas de desarrollo de OpenGL/X11, compila como usuario normal y solicita `sudo` únicamente para instalar el ejecutable, el icono y el acceso del menú (`eggsmaker.desktop`).
+
+Para crear un paquete instalable desde el código fuente, ejecutá el script correspondiente en la distribución de destino:
+
+```bash
+./empaquetar-arch.sh    # genera dist/eggsmaker-go-*.pkg.tar.zst
+./empaquetar-debian.sh  # genera dist/eggsmaker-go_*_*.deb
+```
+
+El empaquetado ejecuta las pruebas y compila para la arquitectura del equipo. En Arch requiere `makepkg` y `zstd`, y genera el paquete comprimido como `.pkg.tar.zst`; en Debian requiere `dpkg-deb` y `dpkg`. En ambos casos necesitás Go y las dependencias de desarrollo de Fyne/OpenGL instaladas. Instalá el archivo resultante con `sudo pacman -U dist/eggsmaker-go-*.pkg.tar.zst` o `sudo apt install ./dist/eggsmaker-go_*_*.deb`. Penguins Eggs se instala por separado.
 
 La aplicación debe iniciarse como usuario normal, no con `sudo`:
 
@@ -73,15 +82,18 @@ El botón **Apariencia** (arriba a la derecha, junto al selector de idioma) perm
 
 - **Tema**: *Predeterminado (actual)* conserva la apariencia original de Eggsmaker; *Seguir al sistema* adapta todos los colores al tema claro u oscuro del sistema (y cambia en vivo si el sistema lo hace); *Oscuro* y *Claro* fijan el tema sin importar el sistema.
 - **Color de acento**: naranja (predeterminado), azul, verde, violeta, rojo, cian o un color personalizado elegido con el selector. Afecta a títulos, botón activo, barras de progreso, marco y texto de la terminal integrada.
+- **Fondos**: se pueden personalizar por separado el fondo de la ventana principal y el del visor de procesos. El fondo principal puede volver al valor del tema; **Restablecer valores predeterminados** restaura todos los colores.
+- Los botones estándar tienen esquinas redondeadas; los botones principales conservan su forma de cápsula.
 - **Restablecer valores predeterminados** vuelve a la apariencia original (tema predeterminado + naranja).
 
 ## Funciones
 
-- `eggs config`: se abre en una terminal interactiva; los cambios se guardan desde el propio asistente de Penguins Eggs. En el flujo de generación se pregunta si se desea abrirlo.
+- `eggs config`: el botón **Editar configuración de Penguins Eggs** abre un formulario gráfico con los mismos ajustes del asistente (usuario y contraseña Live, compresión, prefijo ISO, instalador, modo RAM y lista de exclusiones). Al guardar, la aplicación solicita permisos para actualizar `/etc/penguins-eggs.d/custom.yaml` y `/etc/penguins-eggs.d/custom.exclude.list`.
+- Las confirmaciones de la generación ISO destacan **No** como opción predeterminada.
 - ISO: `eggs kill && eggs tools clean && eggs remaster` o `eggs remaster --clone`.
 - Progreso ISO: Penguins Eggs no proporciona un porcentaje global estable para `eggs remaster`; se muestra una barra indeterminada violeta y la salida real del proceso. La barra de copia es naranja intenso y porcentual.
 - Copia: porcentaje calculado a partir de bytes escritos y tamaño de archivo. El selector de destino se abre ampliado. Se copia primero a un temporal y luego se renombra para evitar dejar un archivo final incompleto.
-- Terminal integrada: visor de salida estándar y errores en tiempo real, texto cyan y marco gris claro. `eggs config` y Krill usan terminal externa porque necesitan una TTY interactiva.
+- Terminal integrada: visor de salida estándar y errores en tiempo real; el color de texto sigue el acento y el fondo se personaliza desde **Apariencia**. Krill usa una terminal externa porque necesita una TTY interactiva.
 - Instaladores: `eggs sysinstall calamares` y `eggs sysinstall krill`.
 - Gestor: recopila listas de paquetes nativos, AUR, Chaotic-AUR y Flatpak cuando están disponibles; permite seleccionar paquetes para restaurar o desinstalar; las ventanas de selección se amplían para mostrar aproximadamente diez elementos o más sin desplazarse. La restauración debe hacerse en una distribución de la misma familia y con los repositorios/herramientas correspondientes configurados.
 
@@ -95,7 +107,7 @@ El botón **Apariencia** (arriba a la derecha, junto al selector de idioma) perm
 ## Notas de compatibilidad
 
 - La interfaz se ejecuta como usuario normal. Las tareas administrativas se elevan individualmente mediante `pkexec`; si no está instalado, se usa `sudo -n` y conviene ejecutar `sudo -v` antes de abrir la aplicación.
-- La terminal externa permanece abierta hasta que se presiona Enter, de modo que se pueden revisar los mensajes de `eggs config` y guardar los cambios dentro del asistente.
+- El editor gráfico de Eggs actualiza sus archivos de configuración mediante autorización del sistema; las tareas que necesitan una TTY interactiva, como Krill, siguen usando una terminal externa.
 - La barra de progreso de copia es porcentual y se actualiza con el tamaño real transferido. La generación de ISO usa barra indeterminada porque no hay un porcentaje oficial que `eggs remaster` garantice.
 
 ### Instalación de una versión ya compilada

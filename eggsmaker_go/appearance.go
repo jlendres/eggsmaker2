@@ -26,17 +26,21 @@ const (
 	accentCustom     = "custom"
 	defaultAccentKey = "orange"
 
-	prefThemeMode    = "theme_mode"
-	prefAccent       = "accent"
-	prefAccentCustom = "accent_custom"
+	prefThemeMode            = "theme_mode"
+	prefAccent               = "accent"
+	prefAccentCustom         = "accent_custom"
+	prefAppBackground        = "app_background"
+	prefConsoleBackground    = "console_background"
+	defaultConsoleBackground = "#2a2a30"
 )
 
 // Nombres de color propios del tema, usados por los widgets personalizados
 // (botones de tareas, barra de progreso) para seguir el tema activo.
 const (
-	colorNameButtonBackground fyne.ThemeColorName = "eggsmakerButtonBackground"
-	colorNameButtonText       fyne.ThemeColorName = "eggsmakerButtonText"
-	colorNameAccentText       fyne.ThemeColorName = "eggsmakerAccentText"
+	colorNameButtonBackground  fyne.ThemeColorName = "eggsmakerButtonBackground"
+	colorNameButtonText        fyne.ThemeColorName = "eggsmakerButtonText"
+	colorNameAccentText        fyne.ThemeColorName = "eggsmakerAccentText"
+	colorNameConsoleBackground fyne.ThemeColorName = "eggsmakerConsoleBackground"
 )
 
 var themeModeKeys = []string{themeModeDefault, themeModeSystem, themeModeDark, themeModeLight}
@@ -75,13 +79,19 @@ func findAccent(key string) (accentPreset, bool) {
 
 // appearanceSettings guarda la configuración de colores elegida por la persona.
 type appearanceSettings struct {
-	Mode   string // default | system | dark | light
-	Accent string // clave de accentPresets o "custom"
-	Custom string // color personalizado en formato #RRGGBB (vacío si nunca se eligió)
+	Mode              string // default | system | dark | light
+	Accent            string // clave de accentPresets o "custom"
+	Custom            string // color personalizado en formato #RRGGBB (vacío si nunca se eligió)
+	AppBackground     string
+	ConsoleBackground string
 }
 
 func defaultAppearance() appearanceSettings {
-	return appearanceSettings{Mode: themeModeDefault, Accent: defaultAccentKey}
+	return appearanceSettings{
+		Mode:              themeModeDefault,
+		Accent:            defaultAccentKey,
+		ConsoleBackground: defaultConsoleBackground,
+	}
 }
 
 func validThemeMode(mode string) bool {
@@ -98,6 +108,12 @@ func normalizeAppearance(a appearanceSettings) appearanceSettings {
 	if !validThemeMode(a.Mode) {
 		a.Mode = themeModeDefault
 	}
+	if _, ok := parseHexColor(a.AppBackground); !ok {
+		a.AppBackground = ""
+	}
+	if _, ok := parseHexColor(a.ConsoleBackground); !ok {
+		a.ConsoleBackground = defaultConsoleBackground
+	}
 	if _, ok := parseHexColor(a.Custom); !ok {
 		a.Custom = ""
 	}
@@ -113,9 +129,11 @@ func normalizeAppearance(a appearanceSettings) appearanceSettings {
 
 func loadAppearance(p fyne.Preferences) appearanceSettings {
 	return normalizeAppearance(appearanceSettings{
-		Mode:   p.StringWithFallback(prefThemeMode, themeModeDefault),
-		Accent: p.StringWithFallback(prefAccent, defaultAccentKey),
-		Custom: p.StringWithFallback(prefAccentCustom, ""),
+		Mode:              p.StringWithFallback(prefThemeMode, themeModeDefault),
+		Accent:            p.StringWithFallback(prefAccent, defaultAccentKey),
+		Custom:            p.StringWithFallback(prefAccentCustom, ""),
+		AppBackground:     p.StringWithFallback(prefAppBackground, ""),
+		ConsoleBackground: p.StringWithFallback(prefConsoleBackground, defaultConsoleBackground),
 	})
 }
 
@@ -123,6 +141,8 @@ func (a appearanceSettings) save(p fyne.Preferences) {
 	p.SetString(prefThemeMode, a.Mode)
 	p.SetString(prefAccent, a.Accent)
 	p.SetString(prefAccentCustom, a.Custom)
+	p.SetString(prefAppBackground, a.AppBackground)
+	p.SetString(prefConsoleBackground, a.ConsoleBackground)
 }
 
 // accentColors devuelve el color primario (botones activos, barra de progreso)
@@ -195,6 +215,10 @@ func (t eggsmakerTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVarian
 		text = primary
 	}
 	switch name {
+	case theme.ColorNameBackground:
+		if c, ok := parseHexColor(t.appearance.AppBackground); ok {
+			return c
+		}
 	case theme.ColorNameDisabled:
 		return text
 	case theme.ColorNamePrimary:
@@ -215,8 +239,35 @@ func (t eggsmakerTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVarian
 			return color.NRGBA{R: 245, G: 245, B: 245, A: 255}
 		}
 		return color.NRGBA{R: 28, G: 28, B: 32, A: 255}
+	case colorNameConsoleBackground:
+		if c, ok := parseHexColor(t.appearance.ConsoleBackground); ok {
+			return c
+		}
 	}
 	return t.Theme.Color(name, v)
+}
+
+func (t eggsmakerTheme) Size(name fyne.ThemeSizeName) float32 {
+	if name == theme.SizeNameInputRadius {
+		return 8
+	}
+	return t.Theme.Size(name)
+}
+
+type consoleTheme struct {
+	fyne.Theme
+	background color.Color
+	foreground color.Color
+}
+
+func (t consoleTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
+	switch name {
+	case theme.ColorNameInputBackground:
+		return t.background
+	case theme.ColorNameForeground, theme.ColorNameDisabled:
+		return t.foreground
+	}
+	return t.Theme.Color(name, variant)
 }
 
 // themeColor consulta un color del tema activo (incluidos los nombres propios).
@@ -326,6 +377,34 @@ func (s *AppState) showAppearanceDialog(myApp fyne.App) {
 		s.applyAppearance(myApp)
 	})
 	custom := widget.NewButton(tr(lang, "Elegir color personalizado…"), pickCustom)
+	pickBackground := func(prefKey, title, description string, update func(string)) {
+		current := ""
+		switch prefKey {
+		case prefAppBackground:
+			current = s.Appearance.AppBackground
+		case prefConsoleBackground:
+			current = s.Appearance.ConsoleBackground
+		}
+		picker := dialog.NewColorPicker(tr(lang, title), tr(lang, description), func(c color.Color) {
+			update(formatHexColor(c))
+			s.applyAppearance(myApp)
+		}, s.Window)
+		picker.Advanced = true
+		if parsed, ok := parseHexColor(current); ok {
+			picker.SetColor(parsed)
+		}
+		picker.Show()
+	}
+	appBackground := widget.NewButton(tr(lang, "Color de fondo de la ventana principal…"), func() {
+		pickBackground(prefAppBackground, "Fondo de la ventana", "Elegí el color de fondo de la ventana principal.", func(c string) { s.Appearance.AppBackground = c })
+	})
+	consoleBackground := widget.NewButton(tr(lang, "Color de fondo de la salida de procesos…"), func() {
+		pickBackground(prefConsoleBackground, "Fondo de la salida", "Elegí el color de fondo del visor de procesos.", func(c string) { s.Appearance.ConsoleBackground = c })
+	})
+	clearAppBackground := widget.NewButton(tr(lang, "Usar fondo predeterminado"), func() {
+		s.Appearance.AppBackground = ""
+		s.applyAppearance(myApp)
+	})
 
 	hint := widget.NewLabel(tr(lang, "«Predeterminado» conserva la apariencia original. «Seguir al sistema» adapta los colores al tema claro u oscuro del sistema."))
 	hint.Wrapping = fyne.TextWrapWord
@@ -334,7 +413,7 @@ func (s *AppState) showAppearanceDialog(myApp fyne.App) {
 		widget.NewFormItem(tr(lang, "Tema:"), modeSelect),
 		widget.NewFormItem(tr(lang, "Color de acento:"), accentSelect),
 	)
-	content := container.NewVBox(form, custom, reset, hint)
+	content := container.NewVBox(form, custom, appBackground, clearAppBackground, consoleBackground, reset, hint)
 	d := dialog.NewCustom(tr(lang, "Apariencia"), tr(lang, "Cerrar"), content, s.Window)
 	d.Resize(fyne.NewSize(480, d.MinSize().Height))
 	d.Show()
@@ -347,6 +426,10 @@ var appearanceTranslations = map[string]map[string]string{
 		"Naranja (predeterminado)": "Orange (default)", "Azul": "Blue", "Verde": "Green", "Violeta": "Purple", "Rojo": "Red", "Cian": "Cyan", "Personalizado": "Custom",
 		"Elegir color personalizado…": "Choose custom color…", "Restablecer valores predeterminados": "Restore defaults",
 		"Color personalizado": "Custom color", "Elegí el color de acento de la aplicación.": "Choose the application's accent color.",
+		"Color de fondo de la ventana principal…": "Main window background color…", "Color de fondo de la salida de procesos…": "Process output background color…",
+		"Fondo de la ventana": "Window background", "Elegí el color de fondo de la ventana principal.": "Choose the main window background color.",
+		"Fondo de la salida": "Output background", "Elegí el color de fondo del visor de procesos.": "Choose the process output viewer background color.",
+		"Usar fondo predeterminado": "Use default background",
 		"«Predeterminado» conserva la apariencia original. «Seguir al sistema» adapta los colores al tema claro u oscuro del sistema.": "“Default” keeps the original look. “Follow system” adapts the colors to the system's light or dark theme.",
 	},
 	"pt": {
@@ -355,6 +438,10 @@ var appearanceTranslations = map[string]map[string]string{
 		"Naranja (predeterminado)": "Laranja (padrão)", "Azul": "Azul", "Verde": "Verde", "Violeta": "Roxo", "Rojo": "Vermelho", "Cian": "Ciano", "Personalizado": "Personalizado",
 		"Elegir color personalizado…": "Escolher cor personalizada…", "Restablecer valores predeterminados": "Restaurar padrões",
 		"Color personalizado": "Cor personalizada", "Elegí el color de acento de la aplicación.": "Escolha a cor de destaque do aplicativo.",
+		"Color de fondo de la ventana principal…": "Cor de fundo da janela principal…", "Color de fondo de la salida de procesos…": "Cor de fundo da saída dos processos…",
+		"Fondo de la ventana": "Fundo da janela", "Elegí el color de fondo de la ventana principal.": "Escolha a cor de fundo da janela principal.",
+		"Fondo de la salida": "Fundo da saída", "Elegí el color de fondo del visor de procesos.": "Escolha a cor de fundo do visor de processos.",
+		"Usar fondo predeterminado": "Usar fundo padrão",
 		"«Predeterminado» conserva la apariencia original. «Seguir al sistema» adapta los colores al tema claro u oscuro del sistema.": "«Padrão» mantém a aparência original. «Seguir o sistema» adapta as cores ao tema claro ou escuro do sistema.",
 	},
 	"it": {
@@ -363,6 +450,10 @@ var appearanceTranslations = map[string]map[string]string{
 		"Naranja (predeterminado)": "Arancione (predefinito)", "Azul": "Blu", "Verde": "Verde", "Violeta": "Viola", "Rojo": "Rosso", "Cian": "Ciano", "Personalizado": "Personalizzato",
 		"Elegir color personalizado…": "Scegli colore personalizzato…", "Restablecer valores predeterminados": "Ripristina predefiniti",
 		"Color personalizado": "Colore personalizzato", "Elegí el color de acento de la aplicación.": "Scegli il colore di accento dell'applicazione.",
+		"Color de fondo de la ventana principal…": "Colore di sfondo della finestra principale…", "Color de fondo de la salida de procesos…": "Colore di sfondo dell'output dei processi…",
+		"Fondo de la ventana": "Sfondo della finestra", "Elegí el color de fondo de la ventana principal.": "Scegli il colore di sfondo della finestra principale.",
+		"Fondo de la salida": "Sfondo dell'output", "Elegí el color de fondo del visor de procesos.": "Scegli il colore di sfondo del visualizzatore dei processi.",
+		"Usar fondo predeterminado": "Usa sfondo predefinito",
 		"«Predeterminado» conserva la apariencia original. «Seguir al sistema» adapta los colores al tema claro u oscuro del sistema.": "«Predefinito» mantiene l'aspetto originale. «Segui il sistema» adatta i colori al tema chiaro o scuro del sistema.",
 	},
 }

@@ -15,6 +15,9 @@ func tr(lang, source string) string {
 	if translated, ok := appearanceTranslations[lang][source]; ok {
 		return translated
 	}
+	if translated, ok := eggsConfigTranslations[lang][source]; ok {
+		return translated
+	}
 	return source
 }
 

@@ -75,6 +75,24 @@ func TestAccentSelection(t *testing.T) {
 	}
 }
 
+func TestCustomAppearanceBackgroundColors(t *testing.T) {
+	th := newEggsmakerTheme(appearanceSettings{
+		Mode:              themeModeDefault,
+		Accent:            defaultAccentKey,
+		AppBackground:     "#123456",
+		ConsoleBackground: "#654321",
+	})
+	if got := th.Color(theme.ColorNameBackground, theme.VariantDark); got != (color.NRGBA{R: 0x12, G: 0x34, B: 0x56, A: 255}) {
+		t.Errorf("custom main background = %v", got)
+	}
+	if got := th.Color(colorNameConsoleBackground, theme.VariantDark); got != (color.NRGBA{R: 0x65, G: 0x43, B: 0x21, A: 255}) {
+		t.Errorf("custom console background = %v", got)
+	}
+	if got := th.Size(theme.SizeNameInputRadius); got != 8 {
+		t.Errorf("button/input corner radius = %v; want 8", got)
+	}
+}
+
 func TestParseAndFormatHexColor(t *testing.T) {
 	c, ok := parseHexColor("#FF6900")
 	if !ok || c != (color.NRGBA{R: 255, G: 105, B: 0, A: 255}) {
@@ -95,11 +113,25 @@ func TestNormalizeAppearance(t *testing.T) {
 	if got != defaultAppearance() {
 		t.Errorf("invalid values should fall back to defaults, got %+v", got)
 	}
+	got = normalizeAppearance(appearanceSettings{
+		Mode:              themeModeDefault,
+		Accent:            defaultAccentKey,
+		AppBackground:     "not-a-color",
+		ConsoleBackground: "also-invalid",
+	})
+	if got.AppBackground != "" || got.ConsoleBackground != defaultConsoleBackground {
+		t.Errorf("invalid background colors should fall back to defaults, got %+v", got)
+	}
 	got = normalizeAppearance(appearanceSettings{Mode: themeModeSystem, Accent: accentCustom})
 	if got.Accent != defaultAccentKey || got.Mode != themeModeSystem {
 		t.Errorf("custom accent without color should fall back to orange, got %+v", got)
 	}
-	keep := appearanceSettings{Mode: themeModeLight, Accent: accentCustom, Custom: "#abcdef"}
+	keep := appearanceSettings{
+		Mode:              themeModeLight,
+		Accent:            accentCustom,
+		Custom:            "#abcdef",
+		ConsoleBackground: defaultConsoleBackground,
+	}
 	if got := normalizeAppearance(keep); got != keep {
 		t.Errorf("valid settings should be preserved, got %+v", got)
 	}
@@ -107,7 +139,7 @@ func TestNormalizeAppearance(t *testing.T) {
 
 func TestAppearanceTranslations(t *testing.T) {
 	for _, lang := range []string{"en", "pt", "it"} {
-		for _, src := range append([]string{"Apariencia", "Tema:", "Color de acento:", "Personalizado"}, func() []string {
+		for _, src := range append([]string{"Apariencia", "Tema:", "Color de acento:", "Personalizado", "Color de fondo de la ventana principal…", "Color de fondo de la salida de procesos…"}, func() []string {
 			var all []string
 			for _, l := range themeModeLabels {
 				all = append(all, l)
