@@ -492,7 +492,11 @@ func (s *AppState) askCleanup() {
 }
 
 func (s *AppState) showInstallerDialog() {
-	choices := []string{tr(s.Language, "Calamares (interfaz gráfica)"), tr(s.Language, "Krill (terminal interactiva)")}
+	choices := []string{
+		tr(s.Language, "Calamares (interfaz gráfica)"),
+		tr(s.Language, "Krill (terminal interactiva)"),
+		tr(s.Language, "Abrir gestor de particiones"),
+	}
 	selectBox := widget.NewSelect(choices, nil)
 	selectBox.SetSelected(choices[0])
 	dialog.ShowCustomConfirm(tr(s.Language, "Instalación Live"), tr(s.Language, "Ejecutar"), tr(s.Language, "Cancelar"), container.NewVBox(widget.NewLabel(tr(s.Language, "Seleccioná el instalador:")), selectBox), func(ok bool) {
@@ -500,13 +504,48 @@ func (s *AppState) showInstallerDialog() {
 			return
 		}
 		if selectBox.Selected == choices[0] {
-			go func() { _ = s.runLogged(context.Background(), "Calamares", "eggs", "sysinstall", "calamares") }()
-		} else {
+			go func() {
+				command := "sudo " + shellQuote(s.eggBinary()) + " sysinstall calamares"
+				if err := s.runInteractiveAsUser(command, "Eggsmaker Go - Calamares"); err != nil {
+					fyne.Do(func() {
+						dialog.ShowError(fmt.Errorf("%s: %w\n%s", tr(s.Language, "Calamares terminó con un error."), err, tr(s.Language, "Revisá el registro /var/log/calamares-install.log para ver el detalle.")), s.Window)
+					})
+				}
+			}()
+		} else if selectBox.Selected == choices[1] {
 			if err := s.runInteractive(shellQuote(s.eggBinary())+" sysinstall krill", "Eggsmaker Go - Krill"); err != nil {
 				dialog.ShowError(err, s.Window)
 			}
+		} else {
+			s.openPartitionManager()
 		}
 	}, s.Window)
+}
+
+func (s *AppState) openPartitionManager() {
+	manager := installedPartitionManager()
+	if manager == "" {
+		dialog.ShowInformation(
+			tr(s.Language, "Gestor de particiones"),
+			tr(s.Language, "No hay gestor de particiones instalado."),
+			s.Window,
+		)
+		return
+	}
+
+	cmd := exec.Command(manager)
+	if err := cmd.Start(); err != nil {
+		dialog.ShowError(fmt.Errorf("%s: %w", tr(s.Language, "No se pudo abrir el gestor de particiones"), err), s.Window)
+		return
+	}
+	s.logf("\n── %s ──\nSe abrió %s.\n", tr(s.Language, "Gestor de particiones"), manager)
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			fyne.Do(func() {
+				dialog.ShowError(fmt.Errorf("%s: %w", tr(s.Language, "El gestor de particiones finalizó con un error"), err), s.Window)
+			})
+		}
+	}()
 }
 
 func (s *AppState) showPackageManager() {

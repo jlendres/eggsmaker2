@@ -8,6 +8,9 @@ func TestTranslationsAvailable(t *testing.T) {
 		{"en", "Salir", "Exit"},
 		{"pt", "Salir", "Sair"},
 		{"it", "Salir", "Esci"},
+		{"en", "Abrir gestor de particiones", "Open partition manager"},
+		{"pt", "No hay gestor de particiones instalado.", "Não há gerenciador de partições instalado."},
+		{"it", "Gestor de particiones", "Gestore partizioni"},
 	}
 	for _, tc := range cases {
 		if got := tr(tc.lang, tc.source); got != tc.want {

@@ -92,6 +92,14 @@ func (s *AppState) streamCommand(ctx context.Context, title string, cmd *exec.Cm
 }
 
 func (s *AppState) runInteractive(command, title string) error {
+	return s.runInteractiveCommand(command, title, true)
+}
+
+func (s *AppState) runInteractiveAsUser(command, title string) error {
+	return s.runInteractiveCommand(command, title, false)
+}
+
+func (s *AppState) runInteractiveCommand(command, title string, elevate bool) error {
 	terms := []string{"konsole", "xfce4-terminal", "gnome-terminal", "kitty", "alacritty", "xterm", "x-terminal-emulator"}
 	term := ""
 	for _, candidate := range terms {
@@ -107,7 +115,7 @@ func (s *AppState) runInteractive(command, title string) error {
 	}
 	var args []string
 	shell := ""
-	if os.Geteuid() == 0 {
+	if !elevate || os.Geteuid() == 0 {
 		shell = command
 	} else if _, err := exec.LookPath("pkexec"); err == nil {
 		shell = "pkexec /bin/bash -lc " + shellQuote(command)

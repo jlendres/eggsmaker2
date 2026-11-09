@@ -1,0 +1,12 @@
+ajustes de eggsmaker go en calamares e incorporacion de un agregado 
+en install calamares/krill
+
+1- en la opcion install calamares/krill:
+krill se abre en terminal correctamente.
+calamares da un error :
+error: the graphical installer was interrupted with an error . signal abortes (core dumped)
+exit status 1
+
+2- agregar la opcion "abrir gestor de particiones" . Por defecto seria gparted , de no existir
+intentar abrir el gestor de particiones por defecto (el de kde plasma o el de gnome), de lo contrario
+indicar que "no hay gestor de particiones instalado"

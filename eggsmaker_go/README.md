@@ -94,7 +94,8 @@ El botón **Apariencia** (arriba a la derecha, junto al selector de idioma) perm
 - Progreso ISO: Penguins Eggs no proporciona un porcentaje global estable para `eggs remaster`; se muestra una barra indeterminada violeta y la salida real del proceso. La barra de copia es naranja intenso y porcentual.
 - Copia: porcentaje calculado a partir de bytes escritos y tamaño de archivo. El selector de destino se abre ampliado. Se copia primero a un temporal y luego se renombra para evitar dejar un archivo final incompleto.
 - Terminal integrada: visor de salida estándar y errores en tiempo real; el color de texto sigue el acento y el fondo se personaliza desde **Apariencia**. Krill usa una terminal externa porque necesita una TTY interactiva.
-- Instaladores: `eggs sysinstall calamares` y `eggs sysinstall krill`.
+- Instaladores: Krill abre una terminal interactiva. Calamares se inicia en una terminal como `sudo eggs sysinstall calamares`, para permitir el ingreso de la contraseña y conservar el entorno gráfico de la sesión. Si falla, Eggsmaker muestra el error y señala `/var/log/calamares-install.log` para consultar el diagnóstico.
+- El diálogo de instalación también permite abrir GParted; si no está instalado, busca el gestor de particiones de KDE o GNOME disponible.
 - Gestor: recopila listas de paquetes nativos, AUR, Chaotic-AUR y Flatpak cuando están disponibles; permite seleccionar paquetes para restaurar o desinstalar; las ventanas de selección se amplían para mostrar aproximadamente diez elementos o más sin desplazarse. La restauración debe hacerse en una distribución de la misma familia y con los repositorios/herramientas correspondientes configurados.
 
 ## Seguridad
