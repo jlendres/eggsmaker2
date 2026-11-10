@@ -13,7 +13,7 @@ import (
 	"fyne.io/fyne/v2/app"
 )
 
-const AppVersion = "26.11.9"
+const AppVersion = "26.11.10"
 
 type DistroFamily string
 

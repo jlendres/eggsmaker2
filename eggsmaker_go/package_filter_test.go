@@ -1,9 +1,37 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestRunEachPackageContinuesAfterErrors(t *testing.T) {
+	selected := []string{"first", "missing", "last"}
+	var attempted []string
+	var logged strings.Builder
+	wantErr := errors.New("package unavailable")
+	err := runEachPackage("instalar", selected, func(name string) error {
+		attempted = append(attempted, name)
+		if name == "missing" {
+			return wantErr
+		}
+		return nil
+	}, func(format string, args ...any) {
+		_, _ = fmt.Fprintf(&logged, format, args...)
+	})
+	if !reflect.DeepEqual(attempted, selected) {
+		t.Fatalf("attempted packages = %v; want %v", attempted, selected)
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("runEachPackage() error = %v; want wrapped package error", err)
+	}
+	if !strings.Contains(logged.String(), "Finalizó instalar: 1 de 3 paquetes tuvieron errores") {
+		t.Fatalf("failure summary was not logged: %s", logged.String())
+	}
+}
 
 func TestArchRepoPackages(t *testing.T) {
 	output := []byte("core bash 5.2-1\nextra vim 9.1-1\nchaotic-aur app 1.0-1\ninvalid\n")

@@ -778,14 +778,17 @@ func (s *AppState) chooseRemovalList(fileName, title string, flatpak bool) {
 					return
 				}
 				if flatpak {
-					args := append([]string{"uninstall", "-y"}, selected...)
-					err = s.runUserLogged(context.Background(), "Desinstalar Flatpaks", "flatpak", args...)
+					err = runEachPackage("desinstalar", selected, func(name string) error {
+						return s.runUserLogged(context.Background(), "Desinstalar Flatpak "+name, "flatpak", "uninstall", "-y", name)
+					}, s.logf)
 				} else if s.Distro == DistroArch {
-					args := append([]string{"-Rns", "--noconfirm"}, selected...)
-					err = s.runLogged(context.Background(), "Desinstalar paquetes", "pacman", args...)
+					err = runEachPackage("desinstalar", selected, func(name string) error {
+						return s.runLogged(context.Background(), "Desinstalar "+name, "pacman", "-Rns", "--noconfirm", name)
+					}, s.logf)
 				} else {
-					args := append([]string{"purge", "-y"}, selected...)
-					err = s.runLogged(context.Background(), "Desinstalar paquetes", "apt-get", args...)
+					err = runEachPackage("desinstalar", selected, func(name string) error {
+						return s.runLogged(context.Background(), "Desinstalar "+name, "apt-get", "purge", "-y", name)
+					}, s.logf)
 				}
 				if err != nil {
 					fyne.Do(func() { dialog.ShowError(err, s.Window) })
@@ -835,32 +838,35 @@ func (s *AppState) chooseInstallList(fileName, kind string) {
 					} else if _, e := exec.LookPath("yay"); e != nil {
 						err = fmt.Errorf("no se encontró yay")
 					} else {
-						err = s.runUserLogged(context.Background(), "Instalar paquetes AUR", "yay", append([]string{"-S", "--needed", "--noconfirm"}, selected...)...)
+						err = runEachPackage("instalar", selected, func(name string) error {
+							return s.runUserLogged(context.Background(), "Instalar AUR "+name, "yay", "-S", "--needed", "--noconfirm", name)
+						}, s.logf)
 					}
 				case "chaotic":
 					if s.Distro != DistroArch {
 						err = fmt.Errorf("%s", tr(s.Language, "Chaotic-AUR sólo está disponible en Arch"))
 					} else {
-						repoArgs := append([]string{"-S", "--needed", "--noconfirm"}, func() []string {
-							var a []string
-							for _, p := range selected {
-								a = append(a, "chaotic-aur/"+p)
-							}
-							return a
-						}()...)
-						err = s.runLogged(context.Background(), "Instalar paquetes Chaotic-AUR", "pacman", repoArgs...)
+						err = runEachPackage("instalar", selected, func(name string) error {
+							return s.runLogged(context.Background(), "Instalar Chaotic-AUR "+name, "pacman", "-S", "--needed", "--noconfirm", "chaotic-aur/"+name)
+						}, s.logf)
 					}
 				case "flatpak":
 					if _, e := exec.LookPath("flatpak"); e != nil {
 						err = fmt.Errorf("%s", tr(s.Language, "Flatpak no está instalado"))
 					} else {
-						err = s.runUserLogged(context.Background(), "Instalar Flatpaks", "flatpak", append([]string{"install", "--user", "--noninteractive", "-y"}, selected...)...)
+						err = runEachPackage("instalar", selected, func(name string) error {
+							return s.runUserLogged(context.Background(), "Instalar Flatpak "+name, "flatpak", "install", "--user", "--noninteractive", "-y", name)
+						}, s.logf)
 					}
 				default:
 					if s.Distro == DistroArch {
-						err = s.runLogged(context.Background(), tr(s.Language, "Instalar paquetes"), "pacman", append([]string{"-S", "--needed", "--noconfirm"}, selected...)...)
+						err = runEachPackage("instalar", selected, func(name string) error {
+							return s.runLogged(context.Background(), "Instalar "+name, "pacman", "-S", "--needed", "--noconfirm", name)
+						}, s.logf)
 					} else {
-						err = s.runLogged(context.Background(), tr(s.Language, "Instalar paquetes"), "apt-get", append([]string{"install", "-y"}, selected...)...)
+						err = runEachPackage("instalar", selected, func(name string) error {
+							return s.runLogged(context.Background(), "Instalar "+name, "apt-get", "install", "-y", name)
+						}, s.logf)
 					}
 				}
 				if err != nil {

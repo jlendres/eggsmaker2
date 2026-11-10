@@ -2,10 +2,28 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 )
+
+func runEachPackage(action string, packages []string, run func(string) error, logf func(string, ...any)) error {
+	failures := make([]error, 0)
+	for _, name := range packages {
+		logf("[Gestor] %s: %s\n", action, name)
+		if err := run(name); err != nil {
+			logf("[Gestor] Error al %s %s: %v\n", action, name, err)
+			failures = append(failures, fmt.Errorf("%s: %w", name, err))
+		}
+	}
+	if len(failures) == 0 {
+		logf("[Gestor] Finalizó %s para los %d paquetes seleccionados.\n", action, len(packages))
+		return nil
+	}
+	logf("[Gestor] Finalizó %s: %d de %d paquetes tuvieron errores; se intentaron los demás.\n", action, len(failures), len(packages))
+	return errors.Join(failures...)
+}
 
 func packageNamesFromOutput(output []byte) map[string]struct{} {
 	names := make(map[string]struct{})
