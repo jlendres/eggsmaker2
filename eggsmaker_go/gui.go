@@ -758,6 +758,25 @@ func (s *AppState) chooseRemovalList(fileName, title string, flatpak bool) {
 			}
 			go func() {
 				var err error
+				kind := "nativa"
+				if flatpak {
+					kind = "flatpak"
+				} else {
+					switch fileName {
+					case "lista-aur.txt":
+						kind = "aur"
+					case "lista-chaotic-aur.txt":
+						kind = "chaotic"
+					}
+				}
+				selected, err = s.filterSelectedPackages(context.Background(), kind, false, selected)
+				if err != nil {
+					fyne.Do(func() { dialog.ShowError(err, s.Window) })
+					return
+				}
+				if len(selected) == 0 {
+					return
+				}
 				if flatpak {
 					args := append([]string{"uninstall", "-y"}, selected...)
 					err = s.runUserLogged(context.Background(), "Desinstalar Flatpaks", "flatpak", args...)
@@ -801,6 +820,14 @@ func (s *AppState) chooseInstallList(fileName, kind string) {
 			}
 			go func() {
 				var err error
+				selected, err = s.filterSelectedPackages(context.Background(), kind, true, selected)
+				if err != nil {
+					fyne.Do(func() { dialog.ShowError(err, s.Window) })
+					return
+				}
+				if len(selected) == 0 {
+					return
+				}
 				switch kind {
 				case "aur":
 					if s.Distro != DistroArch {

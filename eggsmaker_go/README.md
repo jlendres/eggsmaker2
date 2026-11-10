@@ -96,7 +96,7 @@ El botón **Apariencia** (arriba a la derecha, junto al selector de idioma) perm
 - Terminal integrada: visor de salida estándar y errores en tiempo real; el color de texto sigue el acento y el fondo se personaliza desde **Apariencia**. Krill usa una terminal externa porque necesita una TTY interactiva.
 - Instaladores: Krill abre una terminal interactiva. Calamares se inicia en una terminal como `sudo eggs sysinstall calamares`, para permitir el ingreso de la contraseña y conservar el entorno gráfico de la sesión. Si falla, Eggsmaker muestra el error y señala `/var/log/calamares-install.log` para consultar el diagnóstico.
 - El diálogo de instalación también permite abrir GParted; si no está instalado, busca el gestor de particiones de KDE o GNOME disponible.
-- Gestor: recopila listas de paquetes nativos, AUR, Chaotic-AUR y Flatpak cuando están disponibles; permite seleccionar paquetes para restaurar o desinstalar; las ventanas de selección se amplían para mostrar aproximadamente diez elementos o más sin desplazarse. La restauración debe hacerse en una distribución de la misma familia y con los repositorios/herramientas correspondientes configurados.
+- Gestor: recopila listas de paquetes nativos, AUR, Chaotic-AUR y Flatpak cuando están disponibles; permite seleccionar paquetes para restaurar o desinstalar; las ventanas de selección se amplían para mostrar aproximadamente diez elementos o más sin desplazarse. Antes de ejecutar, omite los paquetes no disponibles o que ya no están instalados, los anota en el visor y continúa con los demás. La restauración debe hacerse en una distribución de la misma familia y con los repositorios/herramientas correspondientes configurados.
 
 ## Seguridad
 
