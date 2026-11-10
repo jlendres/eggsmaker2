@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -149,16 +151,48 @@ func (s *AppState) runInteractiveCommand(command, title string, elevate bool) er
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 
+// userCommand ejecuta una tarea dentro del perfil del usuario de escritorio.
+func (s *AppState) userCommand(ctx context.Context, name string, args ...string) (*exec.Cmd, error) {
+	if os.Geteuid() == 0 && s.RealUser != "" && s.RealUser != "root" {
+		account, err := user.Lookup(s.RealUser)
+		if err != nil {
+			return nil, fmt.Errorf("no se pudo identificar al usuario %s: %w", s.RealUser, err)
+		}
+		runtimeDir := filepath.Join("/run/user", account.Uid)
+		environment := []string{
+			"HOME=" + account.HomeDir,
+			"USER=" + account.Username,
+			"LOGNAME=" + account.Username,
+			"XDG_RUNTIME_DIR=" + runtimeDir,
+			"DBUS_SESSION_BUS_ADDRESS=unix:path=" + filepath.Join(runtimeDir, "bus"),
+		}
+		all := append([]string{"-u", account.Username, "--", "env"}, environment...)
+		all = append(all, name)
+		all = append(all, args...)
+		return exec.CommandContext(ctx, "runuser", all...), nil
+	}
+	return exec.CommandContext(ctx, name, args...), nil
+}
+
 // runUserLogged ejecuta tareas del perfil del usuario (yay/Flatpak --user)
 // sin elevarlas a root. Si la aplicación fue iniciada como root, vuelve al
 // usuario original detectado mediante SUDO_USER.
 func (s *AppState) runUserLogged(ctx context.Context, title, name string, args ...string) error {
-	var cmd *exec.Cmd
-	if os.Geteuid() == 0 && s.RealUser != "" && s.RealUser != "root" {
-		all := append([]string{"-u", s.RealUser, "--", name}, args...)
-		cmd = exec.CommandContext(ctx, "sudo", all...)
-	} else {
-		cmd = exec.CommandContext(ctx, name, args...)
+	cmd, err := s.userCommand(ctx, name, args...)
+	if err != nil {
+		return err
 	}
 	return s.streamCommand(ctx, title, cmd)
+}
+
+func (s *AppState) runUserInteractive(title, name string, args ...string) error {
+	cmd, err := s.userCommand(context.Background(), name, args...)
+	if err != nil {
+		return err
+	}
+	quotedArgs := make([]string, len(cmd.Args))
+	for i, arg := range cmd.Args {
+		quotedArgs[i] = shellQuote(arg)
+	}
+	return s.runInteractiveAsUser(strings.Join(quotedArgs, " "), title)
 }

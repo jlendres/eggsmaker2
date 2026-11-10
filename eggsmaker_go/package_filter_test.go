@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -30,6 +33,66 @@ func TestRunEachPackageContinuesAfterErrors(t *testing.T) {
 	}
 	if !strings.Contains(logged.String(), "Finalizó instalar: 1 de 3 paquetes tuvieron errores") {
 		t.Fatalf("failure summary was not logged: %s", logged.String())
+	}
+}
+
+func TestPackageBatchContinuesAfterPackageError(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls.log")
+	manager := filepath.Join(dir, "fake-pacman")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$PACKAGE_BATCH_TEST_LOG\"\ncase \"$*\" in *fail-package*) exit 7 ;; esac\n"
+	if err := os.WriteFile(manager, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PACKAGE_BATCH_TEST_LOG", logPath)
+
+	cmd, err := packageBatchCommand(context.Background(), "pacman-install", manager, []string{"first-package", "fail-package", "last-package"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("package batch succeeded despite a package failure")
+	}
+	if !strings.Contains(string(output), "se continúa con el siguiente") {
+		t.Fatalf("batch did not report continuation: %s", output)
+	}
+	calls, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"first-package", "fail-package", "last-package"} {
+		if !strings.Contains(string(calls), name) {
+			t.Errorf("package %q was not attempted; calls: %s", name, calls)
+		}
+	}
+}
+
+func TestFlatpakInstallFilterSkipsInstalledAndMissingApps(t *testing.T) {
+	dir := t.TempDir()
+	flatpak := filepath.Join(dir, "flatpak")
+	script := `#!/bin/sh
+case "$1" in
+  remote-ls) printf '%s\n' org.example.installed org.example.available ;;
+  list) printf '%s\n' org.example.installed ;;
+  *) exit 2 ;;
+esac
+`
+	if err := os.WriteFile(flatpak, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	state := &AppState{}
+	got, err := state.filterSelectedPackages(context.Background(), "flatpak", true, []string{
+		"org.example.installed",
+		"org.example.available",
+		"org.example.missing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []string{"org.example.available"}) {
+		t.Fatalf("filtered apps = %v; want [org.example.available]", got)
 	}
 }
 

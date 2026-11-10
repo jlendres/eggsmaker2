@@ -4,9 +4,82 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
+
+const packageBatchScript = `operation=$1
+manager=$2
+shift 2
+status=0
+for package do
+  printf '[Gestor] Procesando %s\n' "$package"
+  case "$operation" in
+    pacman-install) "$manager" -S --needed --noconfirm -- "$package" ;;
+    pacman-remove) "$manager" -Rns --noconfirm -- "$package" ;;
+    apt-install) "$manager" install -y -- "$package" ;;
+    apt-remove) "$manager" purge -y -- "$package" ;;
+    chaotic-install) "$manager" -S --needed --noconfirm "chaotic-aur/$package" ;;
+    chaotic-remove) "$manager" -Rns --noconfirm -- "$package" ;;
+    *) printf '[Gestor] Operación desconocida: %s\n' "$operation" >&2; exit 2 ;;
+  esac
+  result=$?
+  if [ "$result" -ne 0 ]; then
+    printf '[Gestor] Error al procesar %s (código %s); se continúa con el siguiente.\n' "$package" "$result" >&2
+    status=1
+  fi
+done
+exit "$status"
+`
+
+func packageBatchCommand(ctx context.Context, operation, manager string, packages []string) (*exec.Cmd, error) {
+	switch operation {
+	case "pacman-install", "pacman-remove", "apt-install", "apt-remove", "chaotic-install", "chaotic-remove":
+	default:
+		return nil, fmt.Errorf("operación de paquetes no válida: %s", operation)
+	}
+	if len(packages) == 0 {
+		return nil, fmt.Errorf("no hay paquetes para procesar")
+	}
+	args := []string{"-c", packageBatchScript, "eggsmaker-package-batch", operation, manager}
+	args = append(args, packages...)
+	return exec.CommandContext(ctx, "/bin/bash", args...), nil
+}
+
+func (s *AppState) runPrivilegedPackageBatch(ctx context.Context, title, operation string, packages []string) error {
+	managerName := "pacman"
+	switch operation {
+	case "apt-install", "apt-remove":
+		managerName = "apt-get"
+	}
+	manager, err := exec.LookPath(managerName)
+	if err != nil {
+		return fmt.Errorf("%s no está disponible: %w", managerName, err)
+	}
+	cmd, err := packageBatchCommand(ctx, operation, manager, packages)
+	if err != nil {
+		return err
+	}
+	if os.Geteuid() == 0 {
+		return s.streamCommand(ctx, title, cmd)
+	}
+	if pkexec, err := exec.LookPath("pkexec"); err == nil {
+		all := append([]string{cmd.Path}, cmd.Args[1:]...)
+		return s.streamCommand(ctx, title, exec.CommandContext(ctx, pkexec, all...))
+	}
+	if _, err := exec.LookPath("sudo"); err != nil {
+		return fmt.Errorf("se requiere pkexec o sudo para procesar paquetes")
+	}
+	terminalArgs := append([]string{"/bin/bash"}, cmd.Args[1:]...)
+	quotedArgs := make([]string, len(terminalArgs))
+	for i, arg := range terminalArgs {
+		quotedArgs[i] = shellQuote(arg)
+	}
+	command := "sudo " + strings.Join(quotedArgs, " ")
+	s.logf("\n── %s ──\nSe abrirá una terminal para autorizar y procesar el lote completo.\n", title)
+	return s.runInteractiveAsUser(command, title)
+}
 
 func runEachPackage(action string, packages []string, run func(string) error, logf func(string, ...any)) error {
 	failures := make([]error, 0)
@@ -90,6 +163,13 @@ func packageNameKey(name string) string {
 
 func (s *AppState) availablePackageNames(ctx context.Context, kind string, installing bool, selected []string) (map[string]struct{}, error) {
 	run := func(name string, args ...string) ([]byte, error) {
+		if name == "flatpak" {
+			cmd, err := s.userCommand(ctx, name, args...)
+			if err != nil {
+				return nil, err
+			}
+			return cmd.Output()
+		}
 		return exec.CommandContext(ctx, name, args...).Output()
 	}
 
@@ -169,6 +249,23 @@ func (s *AppState) filterSelectedPackages(ctx context.Context, kind string, inst
 		return nil, err
 	}
 	found, missing := filterPackageNames(selected, available)
+	alreadyInstalledCount := 0
+	if kind == "flatpak" && installing && len(found) > 0 {
+		cmd, err := s.userCommand(ctx, "flatpak", "list", "--app", "--columns=application")
+		if err != nil {
+			return nil, fmt.Errorf("no se pudieron consultar las aplicaciones Flatpak instaladas: %w", err)
+		}
+		installedOutput, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("no se pudieron consultar las aplicaciones Flatpak instaladas: %w", err)
+		}
+		var alreadyInstalled []string
+		alreadyInstalled, found = filterPackageNames(found, packageNamesFromOutput(installedOutput))
+		alreadyInstalledCount = len(alreadyInstalled)
+		for _, name := range alreadyInstalled {
+			s.logf("[Gestor] Se omite %s: ya está instalado.\n", name)
+		}
+	}
 	action := "desinstalación"
 	if installing {
 		action = "instalación"
@@ -176,10 +273,10 @@ func (s *AppState) filterSelectedPackages(ctx context.Context, kind string, inst
 	for _, name := range missing {
 		s.logf("[Gestor] Se omite %s: no está disponible para %s.\n", name, action)
 	}
-	if len(missing) > 0 {
-		s.logf("[Gestor] Omitidos %d de %d paquetes; se procesarán los %d disponibles.\n", len(missing), len(selected), len(found))
+	if skipped := len(missing) + alreadyInstalledCount; skipped > 0 {
+		s.logf("[Gestor] Omitidos %d de %d paquetes; se procesarán los %d disponibles.\n", skipped, len(selected), len(found))
 	}
-	if len(found) == 0 {
+	if len(found) == 0 && len(missing) > 0 && alreadyInstalledCount == 0 {
 		s.logf("[Gestor] No hay paquetes disponibles para %s.\n", action)
 	}
 	return found, nil
